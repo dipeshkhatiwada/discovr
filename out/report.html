@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8">
+<title>Discovr Report</title>
+<style>body{font:14px system-ui, sans-serif;padding:16px}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px}
+th{background:#f5f5f5;cursor:pointer}#q{margin:8px 0;padding:8px;width:100%}</style>
+<h2>Discovr Report</h2><input id="q" placeholder="Filter...">
+<table id="t"><thead><tr><th>IP</th><th>Hostname</th><th>Open Ports</th><th>OS Guess</th></tr></thead><tbody><tr><td>192.168.1.1</td><td>nl20.home</td><td>80</td><td>Unknown (web)</td></tr></tbody></table>
+<script>
+const q=document.getElementById('q');const rows=[...document.querySelectorAll('#t tbody tr')];
+q.addEventListener('input',()=>{const s=q.value.toLowerCase();rows.forEach(r=>{r.style.display=
+r.textContent.toLowerCase().includes(s)?'':'none';});});
+</script>

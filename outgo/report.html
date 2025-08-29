@@ -1,0 +1,32 @@
+
+	<!doctype html>
+	<html>
+	<head>
+		<title>Discovr Scan Report</title>
+		<style>
+			body { font-family: Arial, sans-serif; }
+			table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+			th, td { padding: 8px; text-align: left; border: 1px solid #ddd; }
+			th { background-color: #f2f2f2; }
+			#q { margin: 8px 0; padding: 8px; width: 100%; }
+		</style>
+	</head>
+	<body>
+		<h1>Discovr Scan Report</h1>
+		<input id="q" placeholder="Filter results..." />
+		<table>
+			<tr><th>IP</th><th>Hostname</th><th>Open Ports</th><th>OS Guess</th></tr>
+			
+		</table>
+		<script>
+			const q = document.getElementById('q');
+			const rows = [...document.querySelectorAll('table tbody tr')];
+			q.addEventListener('input', () => {
+				const s = q.value.toLowerCase();
+				rows.forEach(row => {
+					row.style.display = row.textContent.toLowerCase().includes(s) ? '' : 'none';
+				});
+			});
+		</script>
+	</body>
+	</html>

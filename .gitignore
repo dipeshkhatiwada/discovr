@@ -1,0 +1,30 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python virtual environments
+.venv/
+venv/
+ENV/
+
+# Go build artifacts
+bin/
+build/
+dist/
+*.out
+
+# Output folders
+out/
+outgo/
+
+# Logs
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editors/IDE
+.vscode/
+.idea/

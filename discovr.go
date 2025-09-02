@@ -12,10 +12,10 @@ import (
 	"log"
 	"path/filepath"
 	"html/template"
+	"discovr/portlists"
 )
 
-// Define the default ports to scan
-var DEFAULT_PORTS = []int{22, 80, 135, 443, 445, 3389}
+// Ports are sourced from portlists package
 
 // Struct for command-line arguments
 type Config struct {
@@ -64,13 +64,18 @@ func scanHost(host string, ports []int, timeout time.Duration) (map[string]inter
 	if len(openPorts) == 0 {
 		return nil, nil
 	}
-	hostName, _ := net.LookupAddr(host)
-	return map[string]interface{}{
-		"ip":         host,
-		"hostname":   hostName,
-		"open_ports": strings.Join(intToStr(openPorts), ","),
-		"os_guess":   guessOS(openPorts),
-	}, nil
+    hostNames, _ := net.LookupAddr(host)
+    hostname := ""
+    if len(hostNames) > 0 {
+        // take the first PTR record and trim trailing dot if present
+        hostname = strings.TrimSuffix(hostNames[0], ".")
+    }
+    return map[string]interface{}{
+        "ip":         host,
+        "hostname":   hostname,
+        "open_ports": strings.Join(intToStr(openPorts), ","),
+        "os_guess":   guessOS(openPorts),
+    }, nil
 }
 
 // Convert int array to string array
@@ -257,13 +262,13 @@ func main() {
 	// Parse command-line arguments
 	cfg := parseFlags()
 
-	// Default ports to scan
-	var ports []int
-	if cfg.QuickScan {
-		ports = []int{22, 80, 443} // Limited set of ports for quick scan
-	} else {
-		ports = DEFAULT_PORTS // Full port set
-	}
+    // Select ports from portlists
+    var ports []int
+    if cfg.QuickScan {
+        ports = portlists.Quick
+    } else {
+        ports = portlists.NMAP_TOP_1000
+    }
 
 	// Set a timeout for TCP connections
 	timeout := 1 * time.Second

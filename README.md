@@ -1,6 +1,6 @@
 # Discovr — Network Scan (Python and Go)
 
-A simple dual-implementation network scanner you can run in Python or Go to test performance and compare results.
+Discovr is an open-source, cross-platform tool designed to quickly find and profile assets across on-prem networks and cloud (AWS, Azure) — with a primary focus on hosts that can run security agents (servers, endpoints, cloud VMs). It’s built for rapid use in unknown client environments where time and visibility are limited.
 
 ## Prerequisites
 
@@ -61,6 +61,9 @@ Run either the Python or Go version with the same flags.
   ```bash
   go run discovr.go --target 192.168.1.0/24 --quick-scan --out outgo/report.csv
   ```
+
+
+remove `--quick-scan` to run full scan in the system
 
 Output files are written to the `out/` (Python) and `outgo/` (Go) folders respectively. Create the folders first if your environment doesn’t auto-create them:
 ```bash

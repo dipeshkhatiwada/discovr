@@ -70,6 +70,34 @@ Output files are written to the `out/` (Python) and `outgo/` (Go) folders respec
 mkdir -p out outgo
 ```
 
+## Build
+
+- Local build (current OS/arch):
+  ```bash
+  mkdir -p dist
+  go build -o dist/discovr .
+  # Run
+  ./dist/discovr --target 192.168.1.0/24 --quick-scan --out outgo/report.csv
+  ```
+
+- Using Makefile targets:
+  - Build current platform:
+    ```bash
+    make build
+    # binary: dist/discovr
+    ```
+  - Cross-compile for Linux/macOS/Windows (amd64/arm64):
+    ```bash
+    make cross
+    # binaries: dist/discovr-$GOOS-$GOARCH[.exe]
+    ```
+
+- Windows (PowerShell/CMD):
+  ```powershell
+  go build -o dist/discovr.exe .
+  dist\discovr.exe --target 192.168.1.0/24 --quick-scan --out outgo/report.csv
+  ```
+
 ## Notes
 
 - Replace `192.168.1.0/24` with the CIDR/subnet you want to scan.

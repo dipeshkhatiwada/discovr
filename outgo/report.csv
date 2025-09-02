@@ -5,5 +5,5 @@ IP,Hostname,Open Ports,OS Guess
 192.168.1.3,,"8008,8009,8443,9000,10001",Unknown
 192.168.1.2,,6668,Unknown
 192.168.1.13,,6668,Unknown
-192.168.1.8,,"49152,62078",Unknown
 192.168.1.1,nl20.home,"80,49152",Unknown (web)
+192.168.1.8,,"49152,62078",Unknown

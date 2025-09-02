@@ -1,18 +1,15 @@
 package main
 
 import (
-	"encoding/csv"
-	"fmt"
-	"flag"
-	"net"
-	"os"
-	"strings"
-	"time"
-	"sync"
-	"log"
-	"path/filepath"
-	"html/template"
-	"discovr/portlists"
+    "fmt"
+    "flag"
+    "net"
+    "strings"
+    "time"
+    "sync"
+    "log"
+    "discovr/portlists"
+    "discovr/export"
 )
 
 // Ports are sourced from portlists package
@@ -144,107 +141,7 @@ func runScan(cidr string, ports []int, concurrency int, timeout time.Duration) (
 }
 
 // Write the scan results to a CSV file
-func writeCSV(rows []map[string]interface{}, outCSV string) {
-	// Ensure the directory exists or create it
-	dir := filepath.Dir(outCSV)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		fmt.Println("Error creating directory:", err)
-		return
-	}
-
-	// Create the CSV file
-	file, err := os.Create(outCSV)
-	if err != nil {
-		fmt.Println("Error creating CSV file:", err)
-		return
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write the headers
-	writer.Write([]string{"IP", "Hostname", "Open Ports", "OS Guess"})
-	// Write the data rows
-	for _, row := range rows {
-		writer.Write([]string{
-			row["ip"].(string),
-			row["hostname"].(string),
-			row["open_ports"].(string),
-			row["os_guess"].(string),
-		})
-	}
-}
-
-// Write the scan results to an HTML file with search functionality
-func writeHTML(rows []map[string]interface{}, outHTML string) {
-	// Ensure the directory exists or create it
-	dir := filepath.Dir(outHTML)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		fmt.Println("Error creating directory:", err)
-		return
-	}
-
-	// Define the HTML template with a search/filter feature
-	tmpl, err := template.New("report").Parse(`
-	<!doctype html>
-	<html>
-	<head>
-		<title>Discovr Scan Report</title>
-		<style>
-			body { font-family: Arial, sans-serif; }
-			table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-			th, td { padding: 8px; text-align: left; border: 1px solid #ddd; }
-			th { background-color: #f2f2f2; }
-			#q { margin: 8px 0; padding: 8px; width: 100%; }
-		</style>
-	</head>
-	<body>
-		<h1>Discovr Scan Report</h1>
-		<input id="q" placeholder="Filter results..." />
-		<table>
-			<tr><th>IP</th><th>Hostname</th><th>Open Ports</th><th>OS Guess</th></tr>
-			{{range .}}
-				<tr>
-					<td>{{.ip}}</td>
-					<td>{{.hostname}}</td>
-					<td>{{.open_ports}}</td>
-					<td>{{.os_guess}}</td>
-				</tr>
-			{{end}}
-		</table>
-		<script>
-			const q = document.getElementById('q');
-			const rows = [...document.querySelectorAll('table tbody tr')];
-			q.addEventListener('input', () => {
-				const s = q.value.toLowerCase();
-				rows.forEach(row => {
-					row.style.display = row.textContent.toLowerCase().includes(s) ? '' : 'none';
-				});
-			});
-		</script>
-	</body>
-	</html>`)
-
-	if err != nil {
-		fmt.Println("Error parsing HTML template:", err)
-		return
-	}
-
-	// Create the HTML file
-	file, err := os.Create(outHTML)
-	if err != nil {
-		fmt.Println("Error creating HTML file:", err)
-		return
-	}
-	defer file.Close()
-
-	// Execute the template and write to the file
-	err = tmpl.Execute(file, rows)
-	if err != nil {
-		fmt.Println("Error executing HTML template:", err)
-	}
-}
+// CSV/HTML export moved to export package
 
 
 // Parse command-line arguments
@@ -276,11 +173,9 @@ func main() {
 	// Run the scan
 	results, elapsed := runScan(cfg.Target, ports, 256, timeout)
 
-	// Write results to CSV
-	writeCSV(results, cfg.OutputFile)
-
-	// Write results to HTML
-	writeHTML(results, cfg.HTMLFile)
+    // Write results
+    export.WriteCSV(results, cfg.OutputFile)
+    export.WriteHTML(results, cfg.HTMLFile)
 
 	// Print the scan summary
 	fmt.Printf("[+] Hosts scanned: %d\n", len(results))

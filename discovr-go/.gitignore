@@ -1,0 +1,8 @@
+# Local build artifact
+discovr
+
+# Logs and reports generated at runtime
+discovr_reports/
+
+# Go module cache vendoring (optional)
+vendor/

@@ -47,13 +47,13 @@ func RunNetworkDiscovery(cidr, ports string, parallel int) ([]types.Asset, int, 
         if err == nil {
             return assets, total, nil
         }
-        fmt.Printf("[!] nmap with OS detection failed (%v). Falling back to no-OS scan...\n", err)
+        fmt.Printf("[!] nmap with OS detection failed (%v). Getting back to no-OS scan.\n", err)
         // Fallback: no OS detection, TCP connect scan (-sT) which doesn't require root
         assets, total, err2 := runNmap(cidr, ports, false)
         if err2 == nil {
             return assets, total, nil
         }
-        fmt.Printf("[!] nmap without OS detection also failed (%v). Falling back to basic TCP scan...\n", err2)
+        fmt.Printf("[!] nmap without OS detection also failed (%v). Getting back to basic TCP scan.\n", err2)
         return runBasicScan(cidr, ports, parallel)
     }
     return runBasicScan(cidr, ports, parallel)

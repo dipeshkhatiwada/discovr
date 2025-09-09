@@ -33,6 +33,8 @@ Interactive UI (example)
 ```text
 $ ./discovr
 
+Discovr can elevate for better scanning (pcap/nmap OS). Elevate now? (y/N): y
+
 Discovr Interactive Mode
 Select an option:
   1) Active network scan

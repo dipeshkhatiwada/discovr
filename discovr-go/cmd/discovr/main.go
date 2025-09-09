@@ -1,25 +1,26 @@
 package main
 
 import (
-    "bufio"
-    "context"
-    "flag"
-    "fmt"
-    "log"
-    "os"
-    "strconv"
-    "strings"
-    "time"
+	"bufio"
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
-    "discovr/internal/ad"
-    "discovr/internal/cloud"
-    "discovr/internal/core"
-    "discovr/internal/network"
-    "discovr/internal/passive"
-    "discovr/internal/risk"
-    "discovr/internal/tagger"
-    "discovr/internal/types"
-    "discovr/internal/util"
+	"discovr/internal/ad"
+	"discovr/internal/cloud"
+	"discovr/internal/core"
+	"discovr/internal/network"
+	"discovr/internal/passive"
+	"discovr/internal/portlists"
+	"discovr/internal/risk"
+	"discovr/internal/tagger"
+	"discovr/internal/types"
+	"discovr/internal/util"
 )
 
 func main() {
@@ -81,6 +82,20 @@ func main() {
         return
     }
 
+    // Ask for admin/root at startup to improve scanning capabilities
+    if !util.IsAdmin() {
+        reader := bufio.NewReader(os.Stdin)
+        fmt.Print("Discovr can work for better scanning with admin access. Do you want to provide the access? (y/N): ")
+        resp, _ := reader.ReadString('\n')
+        resp = strings.TrimSpace(strings.ToLower(resp))
+        if resp == "y" || resp == "yes" {
+            if err := util.RelaunchWithSudo(); err != nil {
+                log.Fatalf("[!] Elevation failed: %v", err)
+            }
+            return
+        }
+    }
+
     // Note: elevation is requested contextually (e.g., passive capture) rather than at startup.
 
     // Decide feature
@@ -92,6 +107,17 @@ func main() {
         subnet, err := util.DetectLocalSubnet()
         if err != nil { log.Fatalf("[!] Failed to auto-detect local subnet: %v", err) }
         fmt.Printf("[+] Auto-detected local subnet: %s\n", subnet)
+        // Offer elevation again for better OS detection if user declined earlier
+        if !util.IsAdmin() {
+            reader := bufio.NewReader(os.Stdin)
+            fmt.Print("Do you want to provide admin privileges? (y/N): ")
+            resp, _ := reader.ReadString('\n')
+            resp = strings.TrimSpace(strings.ToLower(resp))
+            if resp == "y" || resp == "yes" {
+                if err := util.RelaunchWithSudo(); err != nil { log.Fatalf("[!] Elevation failed: %v", err) }
+                return
+            }
+        }
         start = time.Now()
         as, tot, err := network.RunNetworkDiscovery(subnet, *ports, *parallel)
         if err != nil { log.Fatalf("[!] Network scan failed: %v", err) }
@@ -104,6 +130,17 @@ func main() {
         li, err := core.SetupLogger(feature, *logDir)
         if err != nil { log.Fatalf("[!] Logger setup failed: %v", err) }
         timestamp = li.Timestamp
+        // Offer elevation again for better OS detection if user declined earlier
+        if !util.IsAdmin() {
+            reader := bufio.NewReader(os.Stdin)
+            fmt.Print("Use elevated privileges for better OS detection? (y/N): ")
+            resp, _ := reader.ReadString('\n')
+            resp = strings.TrimSpace(strings.ToLower(resp))
+            if resp == "y" || resp == "yes" {
+                if err := util.RelaunchWithSudo(); err != nil { log.Fatalf("[!] Elevation failed: %v", err) }
+                return
+            }
+        }
         start = time.Now()
         as, tot, err := network.RunNetworkDiscovery(*scanNetwork, *ports, *parallel)
         if err != nil { log.Fatalf("[!] Network scan failed: %v", err) }
@@ -358,10 +395,29 @@ func runInteractive(logDir string) {
             if subnet == "" { log.Fatalf("[!] Network range is required") }
         }
 
-        // Ports
-        fmt.Print("Ports to scan (e.g., 22,80,443) [leave blank for default]: ")
-        pStr, _ := reader.ReadString('\n')
-        pStr = strings.TrimSpace(pStr)
+        // Port preset selection
+        fmt.Println("Choose ports:")
+        fmt.Println("  1) Quick (22,80,443,3389)")
+        fmt.Println("  2) Medium (common infra ports)")
+        fmt.Println("  3) Top 1000 (Nmap top ports)")
+        fmt.Println("  4) Custom (comma-separated)")
+        fmt.Print("Enter choice [1-4]: ")
+        pChoiceStr, _ := reader.ReadString('\n')
+        pChoiceStr = strings.TrimSpace(pChoiceStr)
+        pChoice, _ := strconv.Atoi(pChoiceStr)
+        pStr := ""
+        switch pChoice {
+        case 1:
+            pStr = intsToCSV(portlists.Quick)
+        case 2:
+            pStr = intsToCSV(portlists.Medium)
+        case 3:
+            pStr = intsToCSV(portlists.NMAP_TOP_1000)
+        default:
+            fmt.Print("Ports to scan (e.g., 22,80,443): ")
+            raw, _ := reader.ReadString('\n')
+            pStr = strings.TrimSpace(raw)
+        }
 
         // Parallel workers
         fmt.Print("Parallel workers [1]: ")
@@ -498,4 +554,15 @@ func runInteractive(logDir string) {
 
     // Export prompt
     handleExport(assets, feature, timestamp, "", "")
+}
+
+// intsToCSV converts a slice of ints to a comma-separated string
+func intsToCSV(nums []int) string {
+    if len(nums) == 0 { return "" }
+    b := strings.Builder{}
+    for i, n := range nums {
+        if i > 0 { b.WriteByte(',') }
+        b.WriteString(strconv.Itoa(n))
+    }
+    return b.String()
 }

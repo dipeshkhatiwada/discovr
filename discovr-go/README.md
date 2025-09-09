@@ -26,6 +26,38 @@ go build -o discovr ./cmd/discovr
 ```
 
 Run Examples
+- Interactive mode (no flags):
+  - `./discovr` and follow the prompts to select Active scan, Passive discovery, AWS, or Azure. The CLI will ask for any required inputs (CIDR/ports, interface, AWS profile/region, Azure subscription) and then export options.
+
+Interactive UI (example)
+```text
+$ sudo go run ./cmd/discovr
+
+Discovr Interactive Mode
+Select an option:
+  1) Active network scan
+  2) Passive discovery
+  3) Cloud: AWS
+  4) Cloud: Azure
+Enter choice [1-4]: 1
+Auto-detect local subnet? (y/N): y
+[+] Auto-detected local subnet: 192.168.1.0/24
+Ports to scan (e.g., 22,80,443) [leave blank for default]: 22,80,443
+Parallel workers [1]: 10
+
+[+] ... scan output ...
+
+Do you want to save results? (yes/no): yes
+Choose format (csv/json/html/all): all
+[+] CSV saved: /Users/<you>/Documents/discovr_reports/csv/discovr_network_YYYYMMDD_HHMMSS.csv
+[+] JSON saved: /Users/<you>/Documents/discovr_reports/json/discovr_network_YYYYMMDD_HHMMSS.json
+[+] HTML saved: /Users/<you>/Documents/discovr_reports/html/discovr_network_YYYYMMDD_HHMMSS.html
+```
+
+Notes for interactive mode
+- `Passive discovery` may require elevated privileges. On Linux/macOS use `sudo ./discovr` when selecting passive mode.
+- If prompted for an interface, type the number shown or the exact interface name (e.g., `eth0`, `en0`).
+- Logs are written under `~/Documents/discovr_reports/logs` by default; override with `--log-dir <PATH>` if needed.
 - Network scan (manual):
   - `./discovr --scan-network 192.168.1.0/24`
   - With ports: `./discovr --scan-network 192.168.1.0/24 --ports 22,80,443`
@@ -81,3 +113,14 @@ go mod tidy
   - Default: `~/Documents/discovr_reports/logs`.
   - If not writable (e.g., macOS Documents permissions), Discovr falls back to `./discovr_reports/logs`, then the OS temp directory.
   - Override anytime with `--log-dir <PATH>`.
+
+Environment Variables (.env)
+- Copy `discovr-go/.env.example` to `discovr-go/.env` and fill in values.
+- Load it before running Discovr so SDKs pick up credentials and defaults:
+  - bash/zsh: `set -a; source .env; set +a`
+- Common variables supported by underlying SDKs:
+  - AWS: `AWS_PROFILE`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`
+  - Azure: `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`
+  - GCP: `GOOGLE_APPLICATION_CREDENTIALS` (when built with `-tags gcp`)
+- For AD, use env vars as a convenience and pass flags:
+  - Example: `./discovr --ad --domain "$AD_DOMAIN" --username "$AD_USERNAME" --password "$AD_PASSWORD"`

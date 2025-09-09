@@ -21,6 +21,12 @@ type LogInfo struct {
 // 3) $TMPDIR/discovr_logs
 func SetupLogger(feature string, logDir string) (*LogInfo, error) {
     ts := time.Now().Format("20060102_150405")
+    // Allow environment override if flag not provided
+    if logDir == "" {
+        if env := os.Getenv("DISCOVR_LOG_DIR"); env != "" {
+            logDir = env
+        }
+    }
 
     tryOpen := func(base string) (*LogInfo, error) {
         if err := os.MkdirAll(base, 0o755); err != nil { return nil, err }
@@ -43,26 +49,25 @@ func SetupLogger(feature string, logDir string) (*LogInfo, error) {
         }
     }
 
-    // 1) ~/Documents/discovr_reports/logs
-    if home, err := os.UserHomeDir(); err == nil {
-        base := filepath.Join(home, "Documents", "discovr_reports", "logs")
-        if li, err := tryOpen(base); err == nil {
-            return li, nil
-        } else if !isPerm(err) {
-            // If it's not a permissions error, return it directly
-            fmt.Printf("[!] Could not use %s: %v\n", base, err)
-        } else {
-            fmt.Printf("[!] Permission denied for %s; falling back.\n", base)
-        }
-    }
-
-    // 2) ./discovr_reports/logs
+    // 1) ./discovr_reports/logs (prefer local workspace to avoid Documents permission prompts)
     if cwd, err := os.Getwd(); err == nil {
         base := filepath.Join(cwd, "discovr_reports", "logs")
         if li, err := tryOpen(base); err == nil {
             return li, nil
         } else {
             fmt.Printf("[!] Could not use %s: %v\n", base, err)
+        }
+    }
+
+    // 2) ~/Documents/discovr_reports/logs
+    if home, err := os.UserHomeDir(); err == nil {
+        base := filepath.Join(home, "Documents", "discovr_reports", "logs")
+        if li, err := tryOpen(base); err == nil {
+            return li, nil
+        } else if !isPerm(err) {
+            fmt.Printf("[!] Could not use %s: %v\n", base, err)
+        } else {
+            fmt.Printf("[!] Permission denied for %s; falling back.\n", base)
         }
     }
 

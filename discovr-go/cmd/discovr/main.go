@@ -81,6 +81,8 @@ func main() {
         return
     }
 
+    // Note: elevation is requested contextually (e.g., passive capture) rather than at startup.
+
     // Decide feature
     if *autoip {
         feature = "network"
@@ -159,6 +161,19 @@ func main() {
         li, err := core.SetupLogger(feature, *logDir)
         if err != nil { log.Fatalf("[!] Logger setup failed: %v", err) }
         timestamp = li.Timestamp
+        // Request elevation if not already admin/root
+        if !util.IsAdmin() {
+            reader := bufio.NewReader(os.Stdin)
+            fmt.Print("Passive discovery may require admin privileges. Elevate with sudo now? (y/N): ")
+            resp, _ := reader.ReadString('\n')
+            resp = strings.TrimSpace(strings.ToLower(resp))
+            if resp == "y" || resp == "yes" {
+                if err := util.RelaunchWithSudo(); err != nil {
+                    log.Fatalf("[!] Elevation failed: %v", err)
+                }
+                return
+            }
+        }
         if *iface == "" {
             // List and ask user to choose
             devs, err := passive.ListInterfaces()
@@ -276,7 +291,7 @@ func handleExport(assets []types.Asset, feature, ts, save, format string) {
     resp, _ := reader.ReadString('\n')
     resp = strings.TrimSpace(strings.ToLower(resp))
     if resp == "yes" || resp == "y" {
-        fmt.Print("Choose format (csv/json/html/all): ")
+        fmt.Print("Choose format (csv/html/all): ")
         fmtChoice, _ := reader.ReadString('\n')
         fmtChoice = strings.TrimSpace(strings.ToLower(fmtChoice))
         switch fmtChoice {
@@ -355,6 +370,16 @@ func runInteractive(logDir string) {
         parallel := 1
         if parStr != "" { if v, err := strconv.Atoi(parStr); err == nil && v > 0 { parallel = v } }
 
+        // Offer elevation to improve OS detection when available
+        if !util.IsAdmin() {
+            fmt.Print("Use elevated privileges for better OS detection? (y/N): ")
+            resp, _ := reader.ReadString('\n')
+            resp = strings.TrimSpace(strings.ToLower(resp))
+            if resp == "y" || resp == "yes" {
+                if err := util.RelaunchWithSudo(); err != nil { log.Fatalf("[!] Elevation failed: %v", err) }
+                return
+            }
+        }
         start = time.Now()
         as, tot, err := network.RunNetworkDiscovery(subnet, pStr, parallel)
         if err != nil { log.Fatalf("[!] Network scan failed: %v", err) }
@@ -399,6 +424,16 @@ func runInteractive(logDir string) {
         tStr = strings.TrimSpace(tStr)
         timeoutSec := 180
         if tStr != "" { if v, err := strconv.Atoi(tStr); err == nil && v > 0 { timeoutSec = v } }
+        // Request elevation if not already admin/root
+        if !util.IsAdmin() {
+            fmt.Print("Passive discovery may require admin privileges. Elevate with sudo now? (y/N): ")
+            resp, _ := reader.ReadString('\n')
+            resp = strings.TrimSpace(strings.ToLower(resp))
+            if resp == "y" || resp == "yes" {
+                if err := util.RelaunchWithSudo(); err != nil { log.Fatalf("[!] Elevation failed: %v", err) }
+                return
+            }
+        }
 
         start = time.Now()
         as, tot, err := passive.Discover(passive.Config{Iface: chosenIface, Timeout: time.Duration(timeoutSec) * time.Second})

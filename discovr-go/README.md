@@ -31,7 +31,7 @@ Run Examples
 
 Interactive UI (example)
 ```text
-$ sudo go run ./cmd/discovr
+$ ./discovr
 
 Discovr Interactive Mode
 Select an option:
@@ -58,6 +58,7 @@ Notes for interactive mode
 - `Passive discovery` may require elevated privileges. On Linux/macOS use `sudo ./discovr` when selecting passive mode.
 - If prompted for an interface, type the number shown or the exact interface name (e.g., `eth0`, `en0`).
 - Logs are written under `~/Documents/discovr_reports/logs` by default; override with `--log-dir <PATH>` if needed.
+- Elevation prompt: When needed (e.g., Passive), Discovr can ask to elevate and re-launch with `sudo` automatically.
 - Network scan (manual):
   - `./discovr --scan-network 192.168.1.0/24`
   - With ports: `./discovr --scan-network 192.168.1.0/24 --ports 22,80,443`
@@ -110,9 +111,8 @@ go get cloud.google.com/go/compute/apiv1@latest
 go mod tidy
 ```
 - Logging directory:
-  - Default: `~/Documents/discovr_reports/logs`.
-  - If not writable (e.g., macOS Documents permissions), Discovr falls back to `./discovr_reports/logs`, then the OS temp directory.
-  - Override anytime with `--log-dir <PATH>`.
+  - Default preference: `./discovr_reports/logs` (local workspace), then `~/Documents/discovr_reports/logs`, then OS temp.
+  - Override anytime with `--log-dir <PATH>` or set env `DISCOVR_LOG_DIR=<PATH>` to avoid permission prompts on macOS Documents.
 
 Environment Variables (.env)
 - Copy `discovr-go/.env.example` to `discovr-go/.env` and fill in values.

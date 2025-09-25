@@ -8,6 +8,30 @@ __pycache__/
 venv/
 ENV/
 
+# Local build artifact
+discovr
+
+# Logs and reports generated at runtime
+discovr_reports/
+
+# Go module cache vendoring (optional)
+vendor/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.TemporaryItems
+.apdisk
+.VolumeIcon.icns
+
+
 # Go build artifacts
 bin/
 build/

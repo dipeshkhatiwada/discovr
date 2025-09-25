@@ -1,3 +1,5 @@
+//go:build cgo
+
 package passive
 
 import (
@@ -12,7 +14,15 @@ import (
     "discovr/internal/types"
 )
 
-func ListInterfaces() ([]pcap.Interface, error) { return pcap.FindAllDevs() }
+func ListInterfaces() ([]Interface, error) {
+    devs, err := pcap.FindAllDevs()
+    if err != nil { return nil, err }
+    out := make([]Interface, len(devs))
+    for i, dev := range devs {
+        out[i] = Interface{Name: dev.Name, Description: dev.Description}
+    }
+    return out, nil
+}
 
 type Config struct {
     Iface   string
@@ -90,4 +100,3 @@ func mapToSlice(m map[string]types.Asset) []types.Asset {
     for _, v := range m { out = append(out, v) }
     return out
 }
-

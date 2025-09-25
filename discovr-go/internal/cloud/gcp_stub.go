@@ -1,3 +1,6 @@
+//go:build !gcp
+// +build !gcp
+
 package cloud
 
 import (
@@ -17,4 +20,3 @@ type GCPConfig struct {
 func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
     return nil, fmt.Errorf("GCP support not built. Rebuild with -tags gcp (and ensure modules are fetched)")
 }
-

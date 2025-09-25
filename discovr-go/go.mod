@@ -7,6 +7,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.7.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v5 v5.6.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4 v4.3.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources v1.1.1
 	github.com/aws/aws-sdk-go-v2 v1.31.0
 	github.com/aws/aws-sdk-go-v2/config v1.27.16
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.179.0

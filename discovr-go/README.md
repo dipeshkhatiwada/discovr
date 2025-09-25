@@ -27,7 +27,7 @@ go build -o discovr ./cmd/discovr
 
 Run Examples
 - Interactive mode (no flags):
-  - `./discovr` and follow the prompts to select Active scan, Passive discovery, AWS, Azure, GCP, or Active Directory. The CLI will ask for any required inputs (CIDR/ports, interface, AWS profile/region, Azure subscription, GCP project/zone, or AD domain/user/password) and then export options.
+  - `./discovr` and follow the prompts to select Active scan, Passive discovery, AWS, Azure, GCP, or Active Directory. The CLI will ask for any required inputs (CIDR/ports, interface, AWS profile/region, Azure subscription, GCP project/zone, or AD domain/user/password) and then export options. The menu loops so you can run multiple discovery modes before choosing Exit.
 
 Interactive UI (example)
 ```text
@@ -43,7 +43,8 @@ Select an option:
   4) Cloud: AWS
   5) Cloud: Azure
   6) Cloud: GCP
-Enter choice [1-6]: 1
+  7) Exit
+Enter choice [1-7]: 1
 Auto-detect local subnet? (y/N): y
 [+] Auto-detected local subnet: 192.168.1.0/24
 Ports to scan (e.g., 22,80,443) [leave blank for default]: 22,80,443

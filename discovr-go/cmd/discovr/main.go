@@ -416,313 +416,331 @@ func elapsed(start time.Time) {
 // runInteractive provides a simple terminal menu for selecting discovery modes
 func runInteractive(logDir string) {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("\nDiscovr asset scan Mode")
-	fmt.Println("Select one option from list:")
-	fmt.Println("  1) Active network scan")
-	fmt.Println("  2) Passive discovery")
-	fmt.Println("  3) Active Directory")
-	fmt.Println("  4) Cloud: AWS")
-	fmt.Println("  5) Cloud: Azure")
-	fmt.Println("  6) Cloud: GCP")
-	fmt.Print("Enter choice [1-6]: ")
-	choiceStr, _ := reader.ReadString('\n')
-	choiceStr = strings.TrimSpace(choiceStr)
-	choice, _ := strconv.Atoi(choiceStr)
 
-	var (
-		feature   string
-		timestamp string
-		assets    []types.Asset
-		total     int
-		start     time.Time
-	)
-
-	switch choice {
-	case 1:
-		// Active network scan
-		feature = "network"
-		li, err := core.SetupLogger(feature, logDir)
+	for {
+		fmt.Println()
+		fmt.Println("Discovr asset scan Mode")
+		fmt.Println("Select one option from list:")
+		fmt.Println("  1) Active network scan")
+		fmt.Println("  2) Passive discovery")
+		fmt.Println("  3) Active Directory")
+		fmt.Println("  4) Cloud: AWS")
+		fmt.Println("  5) Cloud: Azure")
+		fmt.Println("  6) Cloud: GCP")
+		fmt.Println("  7) Exit")
+		fmt.Print("Enter choice [1-7]: ")
+		choiceStr, _ := reader.ReadString('\n')
+		choiceStr = strings.TrimSpace(choiceStr)
+		if choiceStr == "" {
+			fmt.Println("[!] No option selected. Please try again.")
+			continue
+		}
+		choice, err := strconv.Atoi(choiceStr)
 		if err != nil {
-			log.Fatalf("[!] Logger setup failed: %v", err)
-		}
-		timestamp = li.Timestamp
-
-		// Subnet selection
-		fmt.Print("Auto-detect local subnet? (y/N): ")
-		autodStr, _ := reader.ReadString('\n')
-		autodStr = strings.TrimSpace(strings.ToLower(autodStr))
-		var subnet string
-		if autodStr == "y" || autodStr == "yes" {
-			s, err := util.DetectLocalSubnet()
-			if err != nil {
-				log.Fatalf("[!] Failed to auto-detect local subnet: %v", err)
-			}
-			subnet = s
-			fmt.Printf("[+] Auto-detected local subnet: %s\n", subnet)
-		} else {
-			fmt.Print("Enter CIDR (e.g., 192.168.1.0/24): ")
-			s, _ := reader.ReadString('\n')
-			subnet = strings.TrimSpace(s)
-			if subnet == "" {
-				log.Fatalf("[!] Network range is required")
-			}
+			fmt.Println("[!] Invalid input. Please enter a number from 1-7.")
+			continue
 		}
 
-		// Port preset selection
-		fmt.Println("Choose ports:")
-		fmt.Println("  1) Quick (22,80,443,3389)")
-		fmt.Println("  2) Medium (common infra ports)")
-		fmt.Println("  3) Top 1000 (Nmap top ports)")
-		fmt.Println("  4) Custom (comma-separated)")
-		fmt.Print("Enter choice [1-4]: ")
-		pChoiceStr, _ := reader.ReadString('\n')
-		pChoiceStr = strings.TrimSpace(pChoiceStr)
-		pChoice, _ := strconv.Atoi(pChoiceStr)
-		pStr := ""
-		switch pChoice {
+		var (
+			feature   string
+			timestamp string
+			assets    []types.Asset
+			total     int
+			start     time.Time
+		)
+
+		switch choice {
 		case 1:
-			pStr = intsToCSV(portlists.Quick)
+			feature = "network"
+			li, err := core.SetupLogger(feature, logDir)
+			if err != nil {
+				log.Fatalf("[!] Logger setup failed: %v", err)
+			}
+			timestamp = li.Timestamp
+
+			fmt.Print("Auto-detect local subnet? (y/N): ")
+			autodStr, _ := reader.ReadString('\n')
+			autodStr = strings.TrimSpace(strings.ToLower(autodStr))
+			var subnet string
+			if autodStr == "y" || autodStr == "yes" {
+				s, err := util.DetectLocalSubnet()
+				if err != nil {
+					log.Fatalf("[!] Failed to auto-detect local subnet: %v", err)
+				}
+				subnet = s
+				fmt.Printf("[+] Auto-detected local subnet: %s\n", subnet)
+			} else {
+				fmt.Print("Enter CIDR to scan (e.g., 192.168.1.0/24): ")
+				subnet, _ = reader.ReadString('\n')
+				subnet = strings.TrimSpace(subnet)
+				if subnet == "" {
+					fmt.Println("[!] No subnet provided; returning to menu.")
+					continue
+				}
+			}
+
+			fmt.Println("Choose ports:")
+			fmt.Println("  1) Quick (22,80,443,3389)")
+			fmt.Println("  2) Medium (common infra ports)")
+			fmt.Println("  3) Top 1000 (Nmap top ports)")
+			fmt.Println("  4) Custom (comma-separated)")
+			fmt.Print("Enter choice [1-4]: ")
+			pChoiceStr, _ := reader.ReadString('\n')
+			pChoiceStr = strings.TrimSpace(pChoiceStr)
+			pChoice, _ := strconv.Atoi(pChoiceStr)
+			portsStr := ""
+			switch pChoice {
+			case 1:
+				portsStr = intsToCSV(portlists.Quick)
+			case 2:
+				portsStr = intsToCSV(portlists.Medium)
+			case 3:
+				portsStr = intsToCSV(portlists.NMAP_TOP_1000)
+			default:
+				fmt.Print("Ports to scan (e.g., 22,80,443): ")
+				raw, _ := reader.ReadString('\n')
+				portsStr = strings.TrimSpace(raw)
+			}
+
+			fmt.Print("Parallel workers [1]: ")
+			parStr, _ := reader.ReadString('\n')
+			parStr = strings.TrimSpace(parStr)
+			parallel := 1
+			if parStr != "" {
+				if v, err := strconv.Atoi(parStr); err == nil && v > 0 {
+					parallel = v
+				}
+			}
+
+			if !util.IsAdmin() {
+				fmt.Print("Use elevated privileges for better OS detection? (y/N): ")
+				resp, _ := reader.ReadString('\n')
+				resp = strings.TrimSpace(strings.ToLower(resp))
+				if resp == "y" || resp == "yes" {
+					if err := util.RelaunchWithSudo(); err != nil {
+						log.Fatalf("[!] Elevation failed: %v", err)
+					}
+					return
+				}
+			}
+
+			start = time.Now()
+			as, tot, err := network.RunNetworkDiscovery(subnet, portsStr, parallel)
+			if err != nil {
+				log.Fatalf("[!] Network scan failed: %v", err)
+			}
+			assets = enrich(as)
+			total = tot
+			core.PrintResults(assets, total, "active assets")
+			elapsed(start)
+
 		case 2:
-			pStr = intsToCSV(portlists.Medium)
+			feature = "passive"
+			li, err := core.SetupLogger(feature, logDir)
+			if err != nil {
+				log.Fatalf("[!] Logger setup failed: %v", err)
+			}
+			timestamp = li.Timestamp
+
+			fmt.Print("Interface (leave blank to choose): ")
+			ifaceStr, _ := reader.ReadString('\n')
+			ifaceStr = strings.TrimSpace(ifaceStr)
+			if ifaceStr == "" {
+				devs, err := passive.ListInterfaces()
+				if err != nil || len(devs) == 0 {
+					fmt.Println("[!] No interfaces available; returning to menu.")
+					continue
+				}
+				for i, d := range devs {
+					desc := d.Description
+					if desc == "" {
+						desc = "(no description)"
+					}
+					fmt.Printf("  %d) %s %s\n", i+1, d.Name, desc)
+				}
+				fmt.Print("Choose interface by number: ")
+				ifaceChoice, _ := reader.ReadString('\n')
+				ifaceChoice = strings.TrimSpace(ifaceChoice)
+				idx, err := strconv.Atoi(ifaceChoice)
+				if err != nil || idx <= 0 || idx > len(devs) {
+					fmt.Println("[!] Invalid choice; returning to menu.")
+					continue
+				}
+				ifaceStr = devs[idx-1].Name
+			}
+
+			fmt.Print("Timeout seconds [180]: ")
+			timeoutStr, _ := reader.ReadString('\n')
+			timeoutStr = strings.TrimSpace(timeoutStr)
+			timeout := 180
+			if timeoutStr != "" {
+				if t, err := strconv.Atoi(timeoutStr); err == nil && t > 0 {
+					timeout = t
+				}
+			}
+
+			if !util.IsAdmin() {
+				fmt.Print("Passive discovery may require sudo. Elevate now? (y/N): ")
+				resp, _ := reader.ReadString('\n')
+				resp = strings.TrimSpace(strings.ToLower(resp))
+				if resp == "y" || resp == "yes" {
+					if err := util.RelaunchWithSudo(); err != nil {
+						log.Fatalf("[!] Elevation failed: %v", err)
+					}
+					return
+				}
+			}
+
+			start = time.Now()
+			as, tot, err := passive.Discover(passive.Config{Iface: ifaceStr, Timeout: time.Duration(timeout) * time.Second})
+			if err != nil {
+				log.Fatalf("[!] Passive discovery failed: %v", err)
+			}
+			assets = enrich(as)
+			total = tot
+			core.PrintResults(assets, total, "passive assets")
+			elapsed(start)
+
 		case 3:
-			pStr = intsToCSV(portlists.NMAP_TOP_1000)
+			feature = "ad"
+			li, err := core.SetupLogger(feature, logDir)
+			if err != nil {
+				log.Fatalf("[!] Logger setup failed: %v", err)
+			}
+			timestamp = li.Timestamp
+			fmt.Print("AD username (user@domain or DOMAIN\\\\user): ")
+			u, _ := reader.ReadString('\n')
+			u = strings.TrimSpace(u)
+			if u == "" {
+				fmt.Println("[!] Username is required; returning to menu.")
+				continue
+			}
+			fmt.Print("AD password: ")
+			p, _ := reader.ReadString('\n')
+			p = strings.TrimSpace(p)
+			if p == "" {
+				fmt.Println("[!] Password is required; returning to menu.")
+				continue
+			}
+			fmt.Print("AD domain (optional, auto-detect if blank): ")
+			d, _ := reader.ReadString('\n')
+			d = strings.TrimSpace(d)
+			resolved, err := ad.ResolveDomain(d, u)
+			if err != nil {
+				fmt.Printf("[!] Could not determine AD domain: %v\n", err)
+				continue
+			}
+			if d == "" {
+				fmt.Printf("[+] Using detected Active Directory domain: %s\n", resolved)
+			}
+			start = time.Now()
+			as, err := ad.Discover(ad.Config{Domain: resolved, Username: u, Password: p})
+			if err != nil {
+				log.Fatalf("[!] Active Directory discovery failed: %v", err)
+			}
+			assets = enrich(as)
+			total = len(assets)
+			core.PrintResults(assets, total, "AD assets")
+			elapsed(start)
+
+		case 4:
+			feature = "cloud"
+			li, err := core.SetupLogger(feature, logDir)
+			if err != nil {
+				log.Fatalf("[!] Logger setup failed: %v", err)
+			}
+			timestamp = li.Timestamp
+			fmt.Print("AWS profile [default]: ")
+			prof, _ := reader.ReadString('\n')
+			prof = strings.TrimSpace(prof)
+			if prof == "" {
+				prof = "default"
+			}
+			fmt.Print("AWS region [us-east-1]: ")
+			reg, _ := reader.ReadString('\n')
+			reg = strings.TrimSpace(reg)
+			if reg == "" {
+				reg = "us-east-1"
+			}
+			ctx := context.Background()
+			start = time.Now()
+			as, err := cloud.DiscoverAWS(ctx, cloud.AWSConfig{Profile: prof, Region: reg})
+			if err != nil {
+				log.Fatalf("[!] AWS discovery failed: %v", err)
+			}
+			assets = enrich(as)
+			total = len(assets)
+			core.PrintResults(assets, total, "cloud assets")
+			elapsed(start)
+
+		case 5:
+			feature = "cloud"
+			li, err := core.SetupLogger(feature, logDir)
+			if err != nil {
+				log.Fatalf("[!] Logger setup failed: %v", err)
+			}
+			timestamp = li.Timestamp
+			fmt.Print("Azure subscription ID: ")
+			sub, _ := reader.ReadString('\n')
+			sub = strings.TrimSpace(sub)
+			if sub == "" {
+				fmt.Println("[!] Subscription ID is required; returning to menu.")
+				continue
+			}
+			ctx := context.Background()
+			start = time.Now()
+			as, err := cloud.DiscoverAzure(ctx, cloud.AzureConfig{Subscription: sub})
+			if err != nil {
+				log.Fatalf("[!] Azure discovery failed: %v", err)
+			}
+			assets = enrich(as)
+			total = len(assets)
+			core.PrintResults(assets, total, "cloud assets")
+			elapsed(start)
+
+		case 6:
+			feature = "cloud"
+			li, err := core.SetupLogger(feature, logDir)
+			if err != nil {
+				log.Fatalf("[!] Logger setup failed: %v", err)
+			}
+			timestamp = li.Timestamp
+			fmt.Print("GCP project ID: ")
+			project, _ := reader.ReadString('\n')
+			project = strings.TrimSpace(project)
+			fmt.Print("GCP zone (e.g., us-central1-a): ")
+			zone, _ := reader.ReadString('\n')
+			zone = strings.TrimSpace(zone)
+			if project == "" || zone == "" {
+				fmt.Println("[!] GCP discovery requires both project ID and zone; returning to menu.")
+				continue
+			}
+			ctx := context.Background()
+			start = time.Now()
+			as, err := cloud.DiscoverGCP(ctx, cloud.GCPConfig{Project: project, Zone: zone})
+			if err != nil {
+				log.Fatalf("[!] GCP discovery failed: %v", err)
+			}
+			assets = enrich(as)
+			total = len(assets)
+			core.PrintResults(assets, total, "cloud assets")
+			elapsed(start)
+
+		case 7:
+			fmt.Println("[+] Exiting Discovr interactive mode. Bye!")
+			return
+
 		default:
-			fmt.Print("Ports to scan (e.g., 22,80,443): ")
-			raw, _ := reader.ReadString('\n')
-			pStr = strings.TrimSpace(raw)
+			fmt.Println("[!] Invalid choice. Please select a number between 1 and 7.")
+			continue
 		}
 
-		// Parallel workers
-		fmt.Print("Parallel workers [1]: ")
-		parStr, _ := reader.ReadString('\n')
-		parStr = strings.TrimSpace(parStr)
-		parallel := 1
-		if parStr != "" {
-			if v, err := strconv.Atoi(parStr); err == nil && v > 0 {
-				parallel = v
-			}
+		if feature != "" && timestamp != "" {
+			fmt.Printf(" Logs saved at Documents/discovr_reports/logs/discovr_%s_log_%s.log\n", feature, timestamp)
 		}
 
-		// Offer elevation to improve OS detection when available
-		if !util.IsAdmin() {
-			fmt.Print("Use elevated privileges for better OS detection? (y/N): ")
-			resp, _ := reader.ReadString('\n')
-			resp = strings.TrimSpace(strings.ToLower(resp))
-			if resp == "y" || resp == "yes" {
-				if err := util.RelaunchWithSudo(); err != nil {
-					log.Fatalf("[!] Elevation failed: %v", err)
-				}
-				return
-			}
-		}
-		start = time.Now()
-		as, tot, err := network.RunNetworkDiscovery(subnet, pStr, parallel)
-		if err != nil {
-			log.Fatalf("[!] Network scan failed: %v", err)
-		}
-		assets, total = enrich(as), tot
-		core.PrintResults(assets, total, "active assets")
-		elapsed(start)
-
-	case 2:
-		// Passive discovery
-		feature = "passive"
-		li, err := core.SetupLogger(feature, logDir)
-		if err != nil {
-			log.Fatalf("[!] Logger setup failed: %v", err)
-		}
-		timestamp = li.Timestamp
-
-		// Interface selection
-		chosenIface := ""
-		ifs, err := passive.ListInterfaces()
-		if err == nil && len(ifs) > 0 {
-			fmt.Println("Available interfaces:")
-			for i, inf := range ifs {
-				desc := inf.Description
-				fmt.Printf("  %d) %s  %s\n", i+1, inf.Name, desc)
-			}
-			fmt.Print("Select interface by number (or enter name): ")
-			sel, _ := reader.ReadString('\n')
-			sel = strings.TrimSpace(sel)
-			if n, err := strconv.Atoi(sel); err == nil && n >= 1 && n <= len(ifs) {
-				chosenIface = ifs[n-1].Name
-			} else if sel != "" {
-				chosenIface = sel
-			}
-		}
-		for chosenIface == "" { // ensure we have an interface
-			fmt.Print("Enter interface name (e.g., eth0, en0): ")
-			s, _ := reader.ReadString('\n')
-			chosenIface = strings.TrimSpace(s)
-		}
-
-		// Timeout
-		fmt.Print("Timeout seconds [180]: ")
-		tStr, _ := reader.ReadString('\n')
-		tStr = strings.TrimSpace(tStr)
-		timeoutSec := 180
-		if tStr != "" {
-			if v, err := strconv.Atoi(tStr); err == nil && v > 0 {
-				timeoutSec = v
-			}
-		}
-		// Request elevation if not already admin/root
-		if !util.IsAdmin() {
-			fmt.Print("Passive discovery may require admin privileges. Elevate with sudo now? (y/N): ")
-			resp, _ := reader.ReadString('\n')
-			resp = strings.TrimSpace(strings.ToLower(resp))
-			if resp == "y" || resp == "yes" {
-				if err := util.RelaunchWithSudo(); err != nil {
-					log.Fatalf("[!] Elevation failed: %v", err)
-				}
-				return
-			}
-		}
-
-		start = time.Now()
-		as, tot, err := passive.Discover(passive.Config{Iface: chosenIface, Timeout: time.Duration(timeoutSec) * time.Second})
-		if err != nil {
-			log.Fatalf("[!] Passive discovery failed: %v", err)
-		}
-		if tot == 0 {
-			fmt.Println("\n[!] No assets discovered during passive monitoring.")
-		}
-		assets, total = enrich(as), tot
-		core.PrintResults(assets, total, "passive assets")
-		elapsed(start)
-
-	case 3:
-		// Active Directory discovery
-		feature = "ad"
-		li, err := core.SetupLogger(feature, logDir)
-		if err != nil {
-			log.Fatalf("[!] Logger setup failed: %v", err)
-		}
-		timestamp = li.Timestamp
-		fmt.Print("AD domain (e.g., mydomain.local): ")
-		d, _ := reader.ReadString('\n')
-		d = strings.TrimSpace(d)
-		if d == "" {
-			log.Fatalf("[!] Domain is required for AD discovery")
-		}
-		fmt.Print("Username (e.g., user@mydomain.local): ")
-		u, _ := reader.ReadString('\n')
-		u = strings.TrimSpace(u)
-		if u == "" {
-			log.Fatalf("[!] Username is required for AD discovery")
-		}
-		fmt.Print("Password: ")
-		p, _ := reader.ReadString('\n')
-		p = strings.TrimSpace(p)
-		if p == "" {
-			log.Fatalf("[!] Password is required for AD discovery")
-		}
-		start = time.Now()
-		as, err := ad.Discover(ad.Config{Domain: d, Username: u, Password: p})
-		if err != nil {
-			log.Fatalf("[!] Active Directory discovery failed: %v", err)
-		}
-		assets = enrich(as)
-		total = len(assets)
-		core.PrintResults(assets, total, "AD assets")
-		elapsed(start)
-
-	case 4:
-		// Cloud: AWS
-		feature = "cloud"
-		li, err := core.SetupLogger(feature, logDir)
-		if err != nil {
-			log.Fatalf("[!] Logger setup failed: %v", err)
-		}
-		timestamp = li.Timestamp
-		fmt.Print("AWS profile [default]: ")
-		prof, _ := reader.ReadString('\n')
-		prof = strings.TrimSpace(prof)
-		if prof == "" {
-			prof = "default"
-		}
-		fmt.Print("AWS region [us-east-1]: ")
-		reg, _ := reader.ReadString('\n')
-		reg = strings.TrimSpace(reg)
-		if reg == "" {
-			reg = "us-east-1"
-		}
-		ctx := context.Background()
-		start = time.Now()
-		as, err := cloud.DiscoverAWS(ctx, cloud.AWSConfig{Profile: prof, Region: reg})
-		if err != nil {
-			log.Fatalf("[!] AWS discovery failed: %v", err)
-		}
-		assets = enrich(as)
-		total = len(assets)
-		core.PrintResults(assets, total, "cloud assets")
-		elapsed(start)
-
-	case 5:
-		// Cloud: Azure
-		feature = "cloud"
-		li, err := core.SetupLogger(feature, logDir)
-		if err != nil {
-			log.Fatalf("[!] Logger setup failed: %v", err)
-		}
-		timestamp = li.Timestamp
-		fmt.Print("Azure subscription ID: ")
-		sub, _ := reader.ReadString('\n')
-		sub = strings.TrimSpace(sub)
-		if sub == "" {
-			log.Fatalf("[!] Subscription ID is required for Azure discovery")
-		}
-		start = time.Now()
-		ctx := context.Background()
-		as, err := cloud.DiscoverAzure(ctx, cloud.AzureConfig{Subscription: sub})
-		if err != nil {
-			log.Fatalf("[!] Azure discovery failed: %v", err)
-		}
-		assets = enrich(as)
-		total = len(assets)
-		core.PrintResults(assets, total, "cloud assets")
-		elapsed(start)
-
-	case 6:
-		// Cloud: GCP
-		feature = "cloud"
-		li, err := core.SetupLogger(feature, logDir)
-		if err != nil {
-			log.Fatalf("[!] Logger setup failed: %v", err)
-		}
-		timestamp = li.Timestamp
-		fmt.Print("GCP project ID: ")
-		project, _ := reader.ReadString('\n')
-		project = strings.TrimSpace(project)
-		fmt.Print("GCP zone (e.g., us-central1-a): ")
-		zone, _ := reader.ReadString('\n')
-		zone = strings.TrimSpace(zone)
-		if project == "" || zone == "" {
-			log.Fatalf("[!] GCP discovery requires both project ID and zone")
-		}
-		ctx := context.Background()
-		start = time.Now()
-		as, err := cloud.DiscoverGCP(ctx, cloud.GCPConfig{Project: project, Zone: zone})
-		if err != nil {
-			log.Fatalf("[!] GCP discovery failed: %v", err)
-		}
-		assets = enrich(as)
-		total = len(assets)
-		core.PrintResults(assets, total, "cloud assets")
-		elapsed(start)
-
-	default:
-		fmt.Println("[!] Invalid choice. Exiting.")
-		return
+		handleExport(assets, feature, timestamp, "", "")
 	}
-
-	if feature != "" && timestamp != "" {
-		fmt.Printf(" Logs saved at Documents/discovr_reports/logs/discovr_%s_log_%s.log\n", feature, timestamp)
-	}
-
-	// Export prompt
-	handleExport(assets, feature, timestamp, "", "")
 }
 
 // intsToCSV converts a slice of ints to a comma-separated string

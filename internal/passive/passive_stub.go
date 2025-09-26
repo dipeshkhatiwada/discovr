@@ -3,24 +3,21 @@
 package passive
 
 import (
-    "errors"
-    "time"
+	"errors"
+	"time"
 
-    "github.com/google/gopacket/pcap"
-
-    "discovr/internal/types"
+	"discovr/internal/types"
 )
 
-func ListInterfaces() ([]pcap.Interface, error) {
-    return nil, errors.New("passive discovery requires cgo/libpcap support")
+func ListInterfaces() ([]Interface, error) {
+	return nil, errors.New("passive discovery requires cgo/libpcap support")
 }
 
 type Config struct {
-    Iface   string
-    Timeout time.Duration
+	Iface   string
+	Timeout time.Duration
 }
 
 func Discover(cfg Config) ([]types.Asset, int, error) {
-    return nil, 0, errors.New("passive discovery unavailable: built without cgo")
+	return nil, 0, errors.New("passive discovery unavailable: built without cgo")
 }
-

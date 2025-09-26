@@ -9,7 +9,7 @@ venv/
 ENV/
 
 # Local build artifact
-discovr
+
 
 # Logs and reports generated at runtime
 discovr_reports/

@@ -1,7 +1,10 @@
 package cloudreport
 
 import (
+	"bytes"
+	"encoding/csv"
 	"fmt"
+	"html/template"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,6 +65,65 @@ func Save(provider, timestamp string, rpt Report) (string, error) {
 		return "", fmt.Errorf("write report: %w", err)
 	}
 	return path, nil
+}
+
+func SaveHTML(provider, timestamp string, rpt Report) (string, error) {
+	html, err := renderHTMLReport(rpt)
+	if err != nil {
+		return "", fmt.Errorf("build html report: %w", err)
+	}
+	if strings.TrimSpace(timestamp) == "" {
+		timestamp = time.Now().Format("20060102_150405")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home dir: %w", err)
+	}
+	base := filepath.Join(home, "Documents", "discovr_reports", "html")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", fmt.Errorf("ensure html dir: %w", err)
+	}
+	filename := fmt.Sprintf("discovr_%s_report_%s.html", strings.ToLower(rpt.Provider), timestamp)
+	path := filepath.Join(base, filename)
+	if err := os.WriteFile(path, []byte(html), 0o644); err != nil {
+		return "", fmt.Errorf("write html report: %w", err)
+	}
+	return path, nil
+}
+
+func ExportCSVs(provider, timestamp string, rpt Report) ([]string, error) {
+	if strings.TrimSpace(timestamp) == "" {
+		timestamp = time.Now().Format("20060102_150405")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("get home dir: %w", err)
+	}
+	csvBase := filepath.Join(home, "Documents", "discovr_reports", "csv")
+	if err := os.MkdirAll(csvBase, 0o755); err != nil {
+		return nil, fmt.Errorf("ensure csv dir: %w", err)
+	}
+	folder := fmt.Sprintf("%s_%s", strings.ToLower(rpt.Provider), timestamp)
+	target := filepath.Join(csvBase, folder)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return nil, fmt.Errorf("ensure provider csv dir: %w", err)
+	}
+	paths := make([]string, 0, len(rpt.Tables)+1)
+	summaryPath := filepath.Join(target, fmt.Sprintf("%s_summary_%s.csv", strings.ToLower(rpt.Provider), timestamp))
+	if err := writeCSV(summaryPath, []string{"Section", "Count"}, summaryRows(rpt.Summary)); err != nil {
+		return nil, err
+	}
+	paths = append(paths, summaryPath)
+	for _, table := range rpt.Tables {
+		slug := sanitize(table.Title)
+		filename := fmt.Sprintf("%s_%s_%s.csv", strings.ToLower(rpt.Provider), slug, timestamp)
+		path := filepath.Join(target, filename)
+		if err := writeCSV(path, table.Header, table.Rows); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
 }
 
 func buildAWSReport(assets []types.Asset) Report {
@@ -191,7 +253,8 @@ func formatAWSRows(section string, assets []types.Asset) [][]string {
 	for _, asset := range assets {
 		switch section {
 		case "IAM Resources":
-			rows = append(rows, []string{strings.Split(asset.Hostname, " ")[1], asset.Hostname, asset.OS})
+			name := strings.TrimPrefix(asset.Hostname, "IAM ")
+			rows = append(rows, []string{name, asset.Hostname, asset.OS})
 		case "Networking":
 			rows = append(rows, []string{"Security Group", asset.Hostname, fmt.Sprintf("Ports %s", asset.Ports)})
 		case "Storage":
@@ -335,4 +398,41 @@ func totalWidth(widths []int) int {
 		}
 	}
 	return total
+}
+
+func writeCSV(path string, header []string, rows [][]string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create csv: %w", err)
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	if err := w.Write(header); err != nil {
+		return fmt.Errorf("write csv header: %w", err)
+	}
+	for _, row := range rows {
+		if err := w.Write(row); err != nil {
+			return fmt.Errorf("write csv row: %w", err)
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
+func summaryRows(rows []SummaryRow) [][]string {
+	out := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, []string{r.Label, fmt.Sprintf("%d", r.Count)})
+	}
+	return out
+}
+
+func sanitize(name string) string {
+	lower := strings.ToLower(name)
+	replacer := strings.NewReplacer(" ", "_", "/", "_", "-", "_", "(", "_", ")", "", "__", "_")
+	cleaned := replacer.Replace(lower)
+	for strings.Contains(cleaned, "__") {
+		cleaned = strings.ReplaceAll(cleaned, "__", "_")
+	}
+	return strings.Trim(cleaned, "_")
 }

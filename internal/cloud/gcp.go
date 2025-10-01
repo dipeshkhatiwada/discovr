@@ -12,19 +12,26 @@ import (
 	compute "cloud.google.com/go/compute/apiv1"
 	computepb "cloud.google.com/go/compute/apiv1/computepb"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 
 	"discovr/internal/types"
 )
 
 type GCPConfig struct {
-	Project string
-	Zone    string
+	Project         string
+	Zone            string
+	CredentialsFile string
 }
 
 func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
+	clientOpts := []option.ClientOption{}
+	if path := strings.TrimSpace(cfg.CredentialsFile); path != "" {
+		clientOpts = append(clientOpts, option.WithCredentialsFile(path))
+	}
+
 	assets := make([]types.Asset, 0, 128)
 
-	instClient, err := compute.NewInstancesRESTClient(ctx)
+	instClient, err := compute.NewInstancesRESTClient(ctx, clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("gcp instances client: %w", err)
 	}
@@ -35,7 +42,7 @@ func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
 		assets = append(assets, instAssets...)
 	}
 
-	diskClient, err := compute.NewDisksRESTClient(ctx)
+	diskClient, err := compute.NewDisksRESTClient(ctx, clientOpts...)
 	if err != nil {
 		fmt.Printf("[!] Failed to initialize GCP disks client: %v\n", err)
 	} else {
@@ -47,7 +54,7 @@ func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
 		}
 	}
 
-	imageClient, err := compute.NewImagesRESTClient(ctx)
+	imageClient, err := compute.NewImagesRESTClient(ctx, clientOpts...)
 	if err != nil {
 		fmt.Printf("[!] Failed to initialize GCP images client: %v\n", err)
 	} else {
@@ -59,7 +66,7 @@ func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
 		}
 	}
 
-	networkClient, err := compute.NewNetworksRESTClient(ctx)
+	networkClient, err := compute.NewNetworksRESTClient(ctx, clientOpts...)
 	if err != nil {
 		fmt.Printf("[!] Failed to initialize GCP networks client: %v\n", err)
 	} else {
@@ -71,7 +78,7 @@ func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
 		}
 	}
 
-	firewallClient, err := compute.NewFirewallsRESTClient(ctx)
+	firewallClient, err := compute.NewFirewallsRESTClient(ctx, clientOpts...)
 	if err != nil {
 		fmt.Printf("[!] Failed to initialize GCP firewalls client: %v\n", err)
 	} else {
@@ -83,11 +90,11 @@ func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
 		}
 	}
 
-	regionClient, err := compute.NewAddressesRESTClient(ctx)
+	regionClient, err := compute.NewAddressesRESTClient(ctx, clientOpts...)
 	if err != nil {
 		fmt.Printf("[!] Failed to initialize GCP addresses client: %v\n", err)
 	}
-	globalAddrClient, err2 := compute.NewGlobalAddressesRESTClient(ctx)
+	globalAddrClient, err2 := compute.NewGlobalAddressesRESTClient(ctx, clientOpts...)
 	if err2 != nil {
 		fmt.Printf("[!] Failed to initialize GCP global addresses client: %v\n", err2)
 	}
@@ -105,11 +112,11 @@ func DiscoverGCP(ctx context.Context, cfg GCPConfig) ([]types.Asset, error) {
 		}
 	}
 
-	frClient, err := compute.NewForwardingRulesRESTClient(ctx)
+	frClient, err := compute.NewForwardingRulesRESTClient(ctx, clientOpts...)
 	if err != nil {
 		fmt.Printf("[!] Failed to initialize GCP forwarding rules client: %v\n", err)
 	}
-	globalFrClient, err2 := compute.NewGlobalForwardingRulesRESTClient(ctx)
+	globalFrClient, err2 := compute.NewGlobalForwardingRulesRESTClient(ctx, clientOpts...)
 	if err2 != nil {
 		fmt.Printf("[!] Failed to initialize GCP global forwarding rules client: %v\n", err2)
 	}
@@ -224,10 +231,7 @@ func gcpDiscoverNetworks(ctx context.Context, client *compute.NetworksClient, pr
 		if err != nil {
 			return nil, fmt.Errorf("list networks: %w", err)
 		}
-		subnets := network.GetSubnetworks()
-		for i := range subnets {
-			subnets[i] = gcpLastSegment(subnets[i])
-		}
+		subnets := uniqueSegments(network.GetSubnetworks())
 		mode := "unknown"
 		if rc := network.GetRoutingConfig(); rc != nil && rc.GetRoutingMode() != "" {
 			mode = strings.ToLower(rc.GetRoutingMode())
@@ -389,6 +393,26 @@ func summarizeFirewallAllows(items []*computepb.Allowed, prefix string) []string
 		entries = append(entries, fmt.Sprintf("%s %s:%s", prefix, proto, strings.Join(ports, ",")))
 	}
 	return entries
+}
+
+func uniqueSegments(entries []string) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(entries))
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		seg := gcpLastSegment(entry)
+		if seg == "" {
+			continue
+		}
+		if _, ok := seen[seg]; ok {
+			continue
+		}
+		seen[seg] = struct{}{}
+		out = append(out, seg)
+	}
+	return out
 }
 
 func summarizeFirewallDenies(items []*computepb.Denied, prefix string) []string {

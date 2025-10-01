@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
@@ -23,8 +24,11 @@ import (
 )
 
 type AWSConfig struct {
-	Profile string
-	Region  string
+	Profile         string
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
 }
 
 type securityGroupSummary struct {
@@ -46,6 +50,14 @@ func DiscoverAWS(ctx context.Context, cfg AWSConfig) ([]types.Asset, error) {
 	if strings.TrimSpace(cfg.Region) != "" {
 		loaders = append(loaders, config.WithRegion(strings.TrimSpace(cfg.Region)))
 	}
+	if cfg.AccessKeyID != "" && cfg.SecretAccessKey != "" {
+		loaders = append(loaders, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			strings.TrimSpace(cfg.AccessKeyID),
+			strings.TrimSpace(cfg.SecretAccessKey),
+			strings.TrimSpace(cfg.SessionToken),
+		)))
+	}
+
 	awsCfg, err := config.LoadDefaultConfig(ctx, loaders...)
 	if err != nil {
 		return nil, fmt.Errorf("load aws config: %w", err)
@@ -57,6 +69,10 @@ func DiscoverAWS(ctx context.Context, cfg AWSConfig) ([]types.Asset, error) {
 	}
 	// Update region on the shared config so that service clients inherit it.
 	awsCfg.Region = region
+
+	if _, err := awsCfg.Credentials.Retrieve(ctx); err != nil {
+		return nil, fmt.Errorf("retrieve aws credentials: %w", err)
+	}
 
 	ec2Client := ec2.NewFromConfig(awsCfg)
 

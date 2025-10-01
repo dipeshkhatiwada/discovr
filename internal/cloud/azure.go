@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	armcompute "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v5"
 	armnetwork "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4"
@@ -16,6 +17,7 @@ import (
 
 type AzureConfig struct {
 	Subscription string
+	Credential   azcore.TokenCredential
 }
 
 type azureNSGSummary struct {
@@ -30,9 +32,13 @@ type azureNSGSummary struct {
 }
 
 func DiscoverAzure(ctx context.Context, cfg AzureConfig) ([]types.Asset, error) {
-	cred, err := azidentity.NewDefaultAzureCredential(nil)
-	if err != nil {
-		return nil, fmt.Errorf("azure credential: %w", err)
+	cred := cfg.Credential
+	if cred == nil {
+		var err error
+		cred, err = azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			return nil, fmt.Errorf("azure credential: %w", err)
+		}
 	}
 
 	rgClient, err := armresources.NewResourceGroupsClient(cfg.Subscription, cred, nil)

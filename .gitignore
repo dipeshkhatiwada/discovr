@@ -21,6 +21,7 @@ vendor/
 .DS_Store
 .AppleDouble
 .LSOverride
+.LSOverride
 Icon
 ._*
 .Spotlight-V100

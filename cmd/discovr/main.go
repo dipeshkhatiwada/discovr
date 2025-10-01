@@ -2,14 +2,21 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 
 	"discovr/internal/ad"
 	"discovr/internal/cloud"
@@ -38,6 +45,13 @@ func main() {
 	subscription := flag.String("subscription", "", "Azure subscription ID")
 	project := flag.String("project", "", "GCP project ID for discovery")
 	zone := flag.String("zone", "", "GCP zone for discovery (e.g., us-central1-a)")
+	gcpCredPath := flag.String("gcp-credentials", "", "Path to GCP service account JSON")
+	awsAccessKey := flag.String("aws-access-key", "", "AWS access key ID")
+	awsSecretKey := flag.String("aws-secret-key", "", "AWS secret access key")
+	awsSessionToken := flag.String("aws-session-token", "", "AWS session token")
+	azureTenant := flag.String("azure-tenant", "", "Azure tenant ID")
+	azureClientID := flag.String("azure-client-id", "", "Azure client ID")
+	azureClientSecret := flag.String("azure-client-secret", "", "Azure client secret")
 
 	// Active Directory
 	adFlag := flag.Bool("ad", false, "Run Active Directory discovery")
@@ -64,11 +78,13 @@ func main() {
 	flag.Parse()
 
 	var (
-		feature   string
-		timestamp string
-		assets    []types.Asset
-		total     int
-		start     time.Time
+		feature           string
+		timestamp         string
+		assets            []types.Asset
+		total             int
+		start             time.Time
+		cloudProviderUsed string
+		cloudReport       *cloudreport.Report
 	)
 
 	// Smoke test shortcut: run a simulated pipeline with no external calls
@@ -175,58 +191,99 @@ func main() {
 		switch strings.ToLower(*cloudProv) {
 		case "aws":
 			fmt.Println("[+] Discovering AWS assets...")
-			as, err := cloud.DiscoverAWS(ctx, cloud.AWSConfig{Profile: *profile, Region: *region})
-			if err != nil {
-				log.Fatalf("[!] AWS discovery failed: %v", err)
+			awsCfg := cloud.AWSConfig{
+				Profile:         strings.TrimSpace(*profile),
+				Region:          strings.TrimSpace(*region),
+				AccessKeyID:     strings.TrimSpace(*awsAccessKey),
+				SecretAccessKey: strings.TrimSpace(*awsSecretKey),
+				SessionToken:    strings.TrimSpace(*awsSessionToken),
 			}
-			assets = enrich(as)
-			report := cloudreport.Generate("aws", assets)
-			path, err := cloudreport.Save("aws", timestamp, report)
-			if err != nil {
-				fmt.Printf("[!] Failed to save AWS cloud report: %v\n", err)
-			} else {
-				fmt.Printf("[+] AWS cloud report saved: %s\n", path)
+			reader := bufio.NewReader(os.Stdin)
+			awsCfg = resolveAWSProfileRegion(reader, awsCfg)
+			retry := true
+			for {
+				as, err := cloud.DiscoverAWS(ctx, awsCfg)
+				if err == nil {
+					assets = enrich(as)
+					break
+				}
+				if !retry || !strings.Contains(strings.ToLower(err.Error()), "credentials") {
+					log.Fatalf("[!] AWS discovery failed: %v", err)
+				}
+				retry = false
+				fmt.Println("[!] AWS credentials not detected. Please provide them (leave access key blank to cancel).")
+				fmt.Print("AWS access key ID: ")
+				ak, _ := reader.ReadString('\n')
+				ak = strings.TrimSpace(ak)
+				if ak == "" {
+					log.Fatalf("[!] AWS discovery cancelled; credentials required")
+				}
+				fmt.Print("AWS secret access key: ")
+				sk, _ := reader.ReadString('\n')
+				sk = strings.TrimSpace(sk)
+				fmt.Print("AWS session token (optional): ")
+				st, _ := reader.ReadString('\n')
+				awsCfg.AccessKeyID = ak
+				awsCfg.SecretAccessKey = sk
+				awsCfg.SessionToken = strings.TrimSpace(st)
 			}
+			cloudProviderUsed = "aws"
+			rpt := cloudreport.Generate(cloudProviderUsed, assets)
+			cloudreport.RenderConsole(rpt)
+			cloudReport = &rpt
 			total = len(assets)
-			core.PrintResults(assets, len(assets), "cloud assets")
+			fmt.Printf("\n[+] %d AWS assets discovered.\n", total)
 		case "gcp":
-			if *project == "" || *zone == "" {
-				log.Fatalf("[!] GCP discovery requires --project and --zone")
-			}
-			fmt.Printf("[+] Discovering GCP assets in project %s, zone %s\n", *project, *zone)
-			as, err := cloud.DiscoverGCP(ctx, cloud.GCPConfig{Project: *project, Zone: *zone})
+			reader := bufio.NewReader(os.Stdin)
+			cfgGCP, err := resolveGCPConfig(reader, *project, *zone, *gcpCredPath)
 			if err != nil {
 				log.Fatalf("[!] GCP discovery failed: %v", err)
 			}
-			assets = enrich(as)
-			report := cloudreport.Generate("gcp", assets)
-			path, err := cloudreport.Save("gcp", timestamp, report)
-			if err != nil {
-				fmt.Printf("[!] Failed to save GCP cloud report: %v\n", err)
-			} else {
-				fmt.Printf("[+] GCP cloud report saved: %s\n", path)
+			fmt.Printf("[+] Discovering GCP assets in project %s, zone %s\n", cfgGCP.Project, cfgGCP.Zone)
+			retries := 0
+			for {
+				as, err := cloud.DiscoverGCP(ctx, cfgGCP)
+				if err == nil {
+					assets = enrich(as)
+					break
+				}
+				retries++
+				if retries > 1 {
+					log.Fatalf("[!] GCP discovery failed: %v", err)
+				}
+				fmt.Printf("[!] GCP discovery failed: %v\n", err)
+				fmt.Print("Enter path to GCP service account JSON (leave blank to abort): ")
+				path, _ := reader.ReadString('\n')
+				path = strings.TrimSpace(path)
+				if path == "" {
+					log.Fatalf("[!] GCP discovery cancelled; credentials required")
+				}
+				cfgGCP.CredentialsFile = path
 			}
+			cloudProviderUsed = "gcp"
+			rpt := cloudreport.Generate(cloudProviderUsed, assets)
+			cloudreport.RenderConsole(rpt)
+			cloudReport = &rpt
 			total = len(assets)
-			core.PrintResults(assets, len(assets), "cloud assets")
+			fmt.Printf("\n[+] %d GCP assets discovered.\n", total)
 		case "azure":
-			if *subscription == "" {
-				log.Fatalf("[!] Azure discovery requires --subscription")
+			reader := bufio.NewReader(os.Stdin)
+			cfgAzure, err := resolveAzureConfig(ctx, reader, *subscription, *azureTenant, *azureClientID, *azureClientSecret)
+			if err != nil {
+				log.Fatalf("[!] Azure discovery failed: %v", err)
 			}
-			fmt.Println("[+] Discovering AZURE assets...")
-			as, err := cloud.DiscoverAzure(ctx, cloud.AzureConfig{Subscription: *subscription})
+			fmt.Printf("[+] Discovering AZURE assets in subscription %s...\n", cfgAzure.Subscription)
+			as, err := cloud.DiscoverAzure(ctx, cfgAzure)
 			if err != nil {
 				log.Fatalf("[!] Azure discovery failed: %v", err)
 			}
 			assets = enrich(as)
-			report := cloudreport.Generate("azure", assets)
-			path, err := cloudreport.Save("azure", timestamp, report)
-			if err != nil {
-				fmt.Printf("[!] Failed to save Azure cloud report: %v\n", err)
-			} else {
-				fmt.Printf("[+] Azure cloud report saved: %s\n", path)
-			}
+			cloudProviderUsed = "azure"
+			rpt := cloudreport.Generate(cloudProviderUsed, assets)
+			cloudreport.RenderConsole(rpt)
+			cloudReport = &rpt
 			total = len(assets)
-			core.PrintResults(assets, len(assets), "cloud assets")
+			fmt.Printf("\n[+] %d Azure assets discovered.\n", total)
 		default:
 			log.Fatalf("[!] Unsupported cloud provider. Choose aws, azure, or gcp")
 		}
@@ -315,7 +372,9 @@ func main() {
 	if feature != "" && timestamp != "" {
 		fmt.Printf("[+] Logs saved at Documents/discovr_reports/logs/discovr_%s_log_%s.log\n", feature, timestamp)
 	}
-	handleExport(assets, feature, timestamp, *save, *format)
+	if feature != "" {
+		handleExport(assets, feature, timestamp, *save, *format, cloudProviderUsed, cloudReport)
+	}
 }
 
 func enrich(in []types.Asset) []types.Asset {
@@ -342,7 +401,7 @@ func runSmokeTest(save, format string) {
 	elapsed(start)
 	// Simulate a feature/timestamp for export filenames
 	ts := time.Now().Format("20060102_150405")
-	handleExport(sample, "smoke", ts, save, format)
+	handleExport(sample, "smoke", ts, save, format, "", nil)
 }
 
 func handleDryRun(autoip bool, scanNetwork, ports string, parallel int, cloudProv, profile, region, subscription, project, zone string, adFlag bool, domain, username, password string, passiveFlag bool, iface string, timeoutSec int) {
@@ -384,54 +443,580 @@ func handleDryRun(autoip bool, scanNetwork, ports string, parallel int, cloudPro
 	}
 }
 
-func handleExport(assets []types.Asset, feature, ts, save, format string) {
+func handleExport(assets []types.Asset, feature, ts, save, format, cloudProvider string, rpt *cloudreport.Report) {
 	if len(assets) == 0 {
 		return
 	}
-	if save != "" || format != "" {
-		if strings.ToLower(save) == "yes" || strings.ToLower(save) == "y" {
-			fmtChoice := strings.ToLower(format)
-			switch fmtChoice {
-			case "csv":
-				_ = core.SaveResults(assets, []string{"csv"}, feature, ts)
-			case "json":
-				_ = core.SaveResults(assets, []string{"json"}, feature, ts)
-			case "html":
-				_ = core.SaveResults(assets, []string{"html"}, feature, ts)
-			case "all":
-				_ = core.SaveResults(assets, []string{"csv", "json", "html"}, feature, ts)
-			default:
-				fmt.Println("[!] Invalid format option, not saving.")
+	if strings.TrimSpace(ts) == "" {
+		ts = time.Now().Format("20060102_150405")
+	}
+
+	ensureReport := func() *cloudreport.Report {
+		if rpt != nil {
+			return rpt
+		}
+		generated := cloudreport.Generate(cloudProvider, assets)
+		rpt = &generated
+		return rpt
+	}
+
+	exportCloud := func(choice string) {
+		report := ensureReport()
+		upper := strings.ToUpper(cloudProvider)
+		switch choice {
+		case "csv":
+			if paths, err := cloudreport.ExportCSVs(cloudProvider, ts, *report); err != nil {
+				fmt.Printf("[!] Failed to export %s CSVs: %v\n", upper, err)
+			} else {
+				for _, p := range paths {
+					fmt.Printf("[+] %s CSV saved: %s\n", upper, p)
+				}
 			}
+		case "html":
+			if path, err := cloudreport.SaveHTML(cloudProvider, ts, *report); err != nil {
+				fmt.Printf("[!] Failed to save %s HTML report: %v\n", upper, err)
+			} else {
+				fmt.Printf("[+] %s HTML report saved: %s\n", upper, path)
+			}
+		case "json":
+			if err := core.SaveResults(assets, []string{"json"}, feature, ts); err != nil {
+				fmt.Printf("[!] Failed to save %s JSON: %v\n", upper, err)
+			}
+		case "text":
+			if path, err := cloudreport.Save(cloudProvider, ts, *report); err != nil {
+				fmt.Printf("[!] Failed to save %s text report: %v\n", upper, err)
+			} else {
+				fmt.Printf("[+] %s text report saved: %s\n", upper, path)
+			}
+		case "all":
+			if path, err := cloudreport.Save(cloudProvider, ts, *report); err != nil {
+				fmt.Printf("[!] Failed to save %s text report: %v\n", upper, err)
+			} else {
+				fmt.Printf("[+] %s text report saved: %s\n", upper, path)
+			}
+			if path, err := cloudreport.SaveHTML(cloudProvider, ts, *report); err != nil {
+				fmt.Printf("[!] Failed to save %s HTML report: %v\n", upper, err)
+			} else {
+				fmt.Printf("[+] %s HTML report saved: %s\n", upper, path)
+			}
+			if paths, err := cloudreport.ExportCSVs(cloudProvider, ts, *report); err != nil {
+				fmt.Printf("[!] Failed to export %s CSVs: %v\n", upper, err)
+			} else {
+				for _, p := range paths {
+					fmt.Printf("[+] %s CSV saved: %s\n", upper, p)
+				}
+			}
+			if err := core.SaveResults(assets, []string{"json"}, feature, ts); err != nil {
+				fmt.Printf("[!] Failed to save %s JSON: %v\n", upper, err)
+			}
+		default:
+			fmt.Println("[!] Invalid format option, not saving.")
+		}
+	}
+
+	exportGeneric := func(choice string) {
+		switch choice {
+		case "csv":
+			if err := core.SaveResults(assets, []string{"csv"}, feature, ts); err != nil {
+				fmt.Printf("[!] Failed to save CSV: %v\n", err)
+			}
+		case "json":
+			if err := core.SaveResults(assets, []string{"json"}, feature, ts); err != nil {
+				fmt.Printf("[!] Failed to save JSON: %v\n", err)
+			}
+		case "html":
+			if err := core.SaveResults(assets, []string{"html"}, feature, ts); err != nil {
+				fmt.Printf("[!] Failed to save HTML: %v\n", err)
+			}
+		case "all":
+			if err := core.SaveResults(assets, []string{"csv", "json", "html"}, feature, ts); err != nil {
+				fmt.Printf("[!] Failed to save results: %v\n", err)
+			}
+		default:
+			fmt.Println("[!] Invalid format option, not saving.")
+		}
+	}
+
+	execute := func(choice string) {
+		choice = strings.ToLower(strings.TrimSpace(choice))
+		if choice == "" {
+			choice = "all"
+		}
+		if cloudProvider != "" {
+			exportCloud(choice)
 		} else {
+			exportGeneric(choice)
+		}
+	}
+
+	save = strings.ToLower(strings.TrimSpace(save))
+	format = strings.ToLower(strings.TrimSpace(format))
+	if save != "" || format != "" {
+		if save == "yes" || save == "y" {
+			execute(format)
+		} else if save != "" {
 			fmt.Println("[+] Results not saved.")
 		}
 		return
 	}
-	// interactive
+
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("\nDo you want to save results? (yes/no): ")
 	resp, _ := reader.ReadString('\n')
 	resp = strings.TrimSpace(strings.ToLower(resp))
 	if resp == "yes" || resp == "y" {
-		fmt.Print("Choose format (csv/html/all): ")
-		fmtChoice, _ := reader.ReadString('\n')
-		fmtChoice = strings.TrimSpace(strings.ToLower(fmtChoice))
-		switch fmtChoice {
-		case "csv":
-			_ = core.SaveResults(assets, []string{"csv"}, feature, ts)
-		case "json":
-			_ = core.SaveResults(assets, []string{"json"}, feature, ts)
-		case "html":
-			_ = core.SaveResults(assets, []string{"html"}, feature, ts)
-		case "all":
-			_ = core.SaveResults(assets, []string{"csv", "json", "html"}, feature, ts)
-		default:
-			fmt.Println("[!] Invalid choice, not saving.")
+		prompt := "Choose format (csv/html/all): "
+		if cloudProvider != "" {
+			prompt = "Choose format (csv/html/all) [all includes text+csv+html+json]: "
 		}
+		fmt.Print(prompt)
+		fmtChoice, _ := reader.ReadString('\n')
+		execute(fmtChoice)
 	} else {
 		fmt.Println("[+] Results not saved.")
 	}
+}
+
+type awsProfileInfo struct {
+	Name   string
+	Region string
+}
+
+type gcpConfigInfo struct {
+	Name    string
+	Project string
+	Zone    string
+}
+
+func resolveAWSProfileRegion(reader *bufio.Reader, cfg cloud.AWSConfig) cloud.AWSConfig {
+	if strings.TrimSpace(cfg.AccessKeyID) != "" && strings.TrimSpace(cfg.SecretAccessKey) != "" {
+		if strings.TrimSpace(cfg.Profile) == "" {
+			cfg.Profile = "default"
+		}
+		if strings.TrimSpace(cfg.Region) == "" {
+			fmt.Print("AWS region [us-east-1]: ")
+			val, _ := reader.ReadString('\n')
+			val = strings.TrimSpace(val)
+			if val == "" {
+				val = "us-east-1"
+			}
+			cfg.Region = val
+		}
+		return cfg
+	}
+
+	profiles := detectAWSProfiles()
+	var selected *awsProfileInfo
+	if name := strings.TrimSpace(cfg.Profile); name != "" {
+		for i := range profiles {
+			if profiles[i].Name == name {
+				selected = &profiles[i]
+				break
+			}
+		}
+	}
+
+	if selected == nil {
+		if len(profiles) == 1 {
+			selected = &profiles[0]
+			fmt.Printf("[+] Using detected AWS profile %s\n", selected.Name)
+		} else if len(profiles) > 1 {
+			fmt.Println("[+] Available AWS profiles:")
+			for i, p := range profiles {
+				label := p.Name
+				if p.Region != "" {
+					label = fmt.Sprintf("%s (region %s)", p.Name, p.Region)
+				}
+				fmt.Printf("    [%d] %s\n", i+1, label)
+			}
+			fmt.Printf("Select profile [1-%d] (default 1): ", len(profiles))
+			choice, _ := reader.ReadString('\n')
+			choice = strings.TrimSpace(choice)
+			idx := 0
+			if choice != "" {
+				if val, err := strconv.Atoi(choice); err == nil && val > 0 && val <= len(profiles) {
+					idx = val - 1
+				}
+			}
+			selected = &profiles[idx]
+		} else {
+			fmt.Print("AWS profile [default]: ")
+			val, _ := reader.ReadString('\n')
+			val = strings.TrimSpace(val)
+			if val == "" {
+				val = "default"
+			}
+			cfg.Profile = val
+			if strings.TrimSpace(cfg.Region) == "" {
+				fmt.Print("AWS region [us-east-1]: ")
+				reg, _ := reader.ReadString('\n')
+				reg = strings.TrimSpace(reg)
+				if reg == "" {
+					reg = "us-east-1"
+				}
+				cfg.Region = reg
+			}
+			return cfg
+		}
+	}
+
+	cfg.Profile = selected.Name
+	if strings.TrimSpace(cfg.Region) == "" {
+		if selected.Region != "" {
+			fmt.Printf("[+] Using region %s from profile %s\n", selected.Region, selected.Name)
+			cfg.Region = selected.Region
+		} else {
+			fmt.Print("AWS region [us-east-1]: ")
+			reg, _ := reader.ReadString('\n')
+			reg = strings.TrimSpace(reg)
+			if reg == "" {
+				reg = "us-east-1"
+			}
+			cfg.Region = reg
+		}
+	}
+
+	return cfg
+}
+
+func detectAWSProfiles() []awsProfileInfo {
+	profiles := make(map[string]*awsProfileInfo)
+	addProfile := func(name string) *awsProfileInfo {
+		if existing, ok := profiles[name]; ok {
+			return existing
+		}
+		info := &awsProfileInfo{Name: name}
+		profiles[name] = info
+		return info
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		configPath := filepath.Join(home, ".aws", "config")
+		parseAWSConfigFile(configPath, addProfile, true)
+		credPath := filepath.Join(home, ".aws", "credentials")
+		parseAWSConfigFile(credPath, addProfile, false)
+	}
+
+	list := make([]awsProfileInfo, 0, len(profiles))
+	for _, info := range profiles {
+		list = append(list, *info)
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	return list
+}
+
+func parseAWSConfigFile(path string, add func(string) *awsProfileInfo, expectProfileKeyword bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	current := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section := strings.TrimSpace(line[1 : len(line)-1])
+			if expectProfileKeyword && strings.HasPrefix(section, "profile ") {
+				section = strings.TrimSpace(section[len("profile "):])
+			}
+			current = section
+			if current != "" {
+				add(current)
+			}
+			continue
+		}
+		if current == "" {
+			continue
+		}
+		if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			if strings.EqualFold(key, "region") {
+				add(current).Region = val
+			}
+		}
+	}
+}
+
+func resolveGCPConfig(reader *bufio.Reader, project, zone, cred string) (cloud.GCPConfig, error) {
+	proj := strings.TrimSpace(project)
+	zn := strings.TrimSpace(zone)
+	cred = strings.TrimSpace(cred)
+
+	if proj == "" {
+		proj = strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT"))
+	}
+	if proj == "" {
+		proj = strings.TrimSpace(os.Getenv("GCLOUD_PROJECT"))
+	}
+
+	configs := detectGCPConfigs()
+	var selected *gcpConfigInfo
+	if proj != "" {
+		for i := range configs {
+			if configs[i].Project == proj || configs[i].Name == proj {
+				selected = &configs[i]
+				if zn == "" && configs[i].Zone != "" {
+					zn = configs[i].Zone
+				}
+				break
+			}
+		}
+	}
+
+	reader = ensureReader(reader)
+
+	if selected == nil {
+		if len(configs) == 1 {
+			selected = &configs[0]
+			if proj == "" {
+				proj = configs[0].Project
+			}
+			if zn == "" {
+				zn = configs[0].Zone
+			}
+			if proj != "" {
+				fmt.Printf("[+] Using detected GCP project %s\n", proj)
+			}
+			if zn != "" {
+				fmt.Printf("[+] Using detected GCP zone %s\n", zn)
+			}
+		} else if len(configs) > 1 && proj == "" {
+			fmt.Println("[+] Available gcloud configurations:")
+			for i, cfg := range configs {
+				label := cfg.Name
+				meta := []string{}
+				if cfg.Project != "" {
+					meta = append(meta, fmt.Sprintf("project %s", cfg.Project))
+				}
+				if cfg.Zone != "" {
+					meta = append(meta, fmt.Sprintf("zone %s", cfg.Zone))
+				}
+				if len(meta) > 0 {
+					label = fmt.Sprintf("%s (%s)", label, strings.Join(meta, ", "))
+				}
+				fmt.Printf("    [%d] %s\n", i+1, label)
+			}
+			fmt.Printf("Select configuration [1-%d] (default 1): ", len(configs))
+			choice, _ := reader.ReadString('\n')
+			choice = strings.TrimSpace(choice)
+			idx := 0
+			if choice != "" {
+				if val, err := strconv.Atoi(choice); err == nil && val > 0 && val <= len(configs) {
+					idx = val - 1
+				}
+			}
+			selected = &configs[idx]
+			if proj == "" {
+				proj = selected.Project
+			}
+			if zn == "" {
+				zn = selected.Zone
+			}
+		}
+	}
+
+	if proj == "" {
+		fmt.Print("GCP project ID: ")
+		val, _ := reader.ReadString('\n')
+		proj = strings.TrimSpace(val)
+	}
+	if proj == "" {
+		return cloud.GCPConfig{}, fmt.Errorf("GCP project ID is required")
+	}
+
+	if zn == "" {
+		if selected != nil && selected.Zone != "" {
+			zn = selected.Zone
+		} else {
+			fmt.Print("GCP zone (e.g., us-central1-a): ")
+			val, _ := reader.ReadString('\n')
+			zn = strings.TrimSpace(val)
+		}
+	}
+	if zn == "" {
+		return cloud.GCPConfig{}, fmt.Errorf("GCP zone is required")
+	}
+
+	return cloud.GCPConfig{Project: proj, Zone: zn, CredentialsFile: cred}, nil
+}
+
+func detectGCPConfigs() []gcpConfigInfo {
+	configs := []gcpConfigInfo{}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return configs
+	}
+	dir := filepath.Join(home, ".config", "gcloud", "configurations")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return configs
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "config_") {
+			continue
+		}
+		info := gcpConfigInfo{Name: strings.TrimPrefix(name, "config_")}
+		parseGCloudConfigFile(filepath.Join(dir, name), &info)
+		configs = append(configs, info)
+	}
+	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
+	return configs
+}
+
+func parseGCloudConfigFile(path string, info *gcpConfigInfo) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	section := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		switch strings.ToLower(section) {
+		case "core":
+			if strings.EqualFold(key, "project") {
+				info.Project = val
+			}
+		case "compute":
+			if strings.EqualFold(key, "zone") {
+				info.Zone = val
+			}
+		}
+	}
+}
+
+func ensureReader(r *bufio.Reader) *bufio.Reader {
+	if r != nil {
+		return r
+	}
+	return bufio.NewReader(os.Stdin)
+}
+
+func resolveAzureConfig(ctx context.Context, reader *bufio.Reader, subscription, tenant, clientID, clientSecret string) (cloud.AzureConfig, error) {
+	tenant = strings.TrimSpace(tenant)
+	clientID = strings.TrimSpace(clientID)
+	clientSecret = strings.TrimSpace(clientSecret)
+
+	var credential azcore.TokenCredential
+	var err error
+	if tenant != "" && clientID != "" && clientSecret != "" {
+		credential, err = azidentity.NewClientSecretCredential(tenant, clientID, clientSecret, nil)
+		if err != nil {
+			return cloud.AzureConfig{}, fmt.Errorf("build Azure credential: %w", err)
+		}
+	} else {
+		credential, err = azidentity.NewDefaultAzureCredential(nil)
+		if err != nil {
+			fmt.Println("[!] Azure credentials not detected. Please provide service principal details.")
+			if tenant == "" {
+				fmt.Print("Azure tenant ID: ")
+				tenant, _ = reader.ReadString('\n')
+				tenant = strings.TrimSpace(tenant)
+			}
+			if clientID == "" {
+				fmt.Print("Azure client ID: ")
+				clientID, _ = reader.ReadString('\n')
+				clientID = strings.TrimSpace(clientID)
+			}
+			if clientSecret == "" {
+				fmt.Print("Azure client secret: ")
+				clientSecret, _ = reader.ReadString('\n')
+				clientSecret = strings.TrimSpace(clientSecret)
+			}
+			if tenant == "" || clientID == "" || clientSecret == "" {
+				return cloud.AzureConfig{}, fmt.Errorf("Azure credentials are required")
+			}
+			credential, err = azidentity.NewClientSecretCredential(tenant, clientID, clientSecret, nil)
+			if err != nil {
+				return cloud.AzureConfig{}, fmt.Errorf("build Azure credential: %w", err)
+			}
+		}
+	}
+
+	subID := strings.TrimSpace(subscription)
+	if subID == "" {
+		subClient, err := armsubscriptions.NewClient(credential, nil)
+		if err == nil {
+			pager := subClient.NewListPager(nil)
+			type subEntry struct {
+				name string
+				id   string
+			}
+			subs := make([]subEntry, 0, 4)
+			for pager.More() {
+				page, err := pager.NextPage(ctx)
+				if err != nil {
+					fmt.Printf("[!] Failed to enumerate Azure subscriptions: %v\n", err)
+					break
+				}
+				for _, s := range page.Value {
+					if s == nil || s.SubscriptionID == nil {
+						continue
+					}
+					entry := subEntry{id: *s.SubscriptionID}
+					if s.DisplayName != nil {
+						entry.name = *s.DisplayName
+					}
+					subs = append(subs, entry)
+				}
+			}
+			if len(subs) == 1 {
+				subID = subs[0].id
+				fmt.Printf("[+] Using detected subscription %s\n", subID)
+			} else if len(subs) > 1 {
+				fmt.Println("[+] Multiple Azure subscriptions detected:")
+				for i, s := range subs {
+					label := s.name
+					if label == "" {
+						label = s.id
+					}
+					fmt.Printf("    [%d] %s (%s)\n", i+1, label, s.id)
+				}
+				fmt.Printf("Select subscription [1-%d] (default 1): ", len(subs))
+				choice, _ := reader.ReadString('\n')
+				choice = strings.TrimSpace(choice)
+				idx := 0
+				if choice != "" {
+					if val, err := strconv.Atoi(choice); err == nil && val > 0 && val <= len(subs) {
+						idx = val - 1
+					}
+				}
+				subID = subs[idx].id
+			}
+		}
+		if subID == "" {
+			fmt.Print("Azure subscription ID: ")
+			manual, _ := reader.ReadString('\n')
+			subID = strings.TrimSpace(manual)
+		}
+	}
+	if subID == "" {
+		return cloud.AzureConfig{}, fmt.Errorf("Azure subscription ID is required")
+	}
+
+	return cloud.AzureConfig{Subscription: subID, Credential: credential}, nil
 }
 
 func elapsed(start time.Time) {
@@ -467,11 +1052,13 @@ func runInteractive(logDir string) {
 		}
 
 		var (
-			feature   string
-			timestamp string
-			assets    []types.Asset
-			total     int
-			start     time.Time
+			feature       string
+			timestamp     string
+			assets        []types.Asset
+			total         int
+			start         time.Time
+			cloudProvider string
+			cloudReport   *cloudreport.Report
 		)
 
 		switch choice {
@@ -675,27 +1262,20 @@ func runInteractive(logDir string) {
 				log.Fatalf("[!] Logger setup failed: %v", err)
 			}
 			timestamp = li.Timestamp
-			fmt.Print("AWS profile [default]: ")
-			prof, _ := reader.ReadString('\n')
-			prof = strings.TrimSpace(prof)
-			if prof == "" {
-				prof = "default"
-			}
-			fmt.Print("AWS region [us-east-1]: ")
-			reg, _ := reader.ReadString('\n')
-			reg = strings.TrimSpace(reg)
-			if reg == "" {
-				reg = "us-east-1"
-			}
 			ctx := context.Background()
 			start = time.Now()
-			as, err := cloud.DiscoverAWS(ctx, cloud.AWSConfig{Profile: prof, Region: reg})
+			awsCfg := resolveAWSProfileRegion(reader, cloud.AWSConfig{})
+			as, err := cloud.DiscoverAWS(ctx, awsCfg)
 			if err != nil {
 				log.Fatalf("[!] AWS discovery failed: %v", err)
 			}
 			assets = enrich(as)
+			cloudProvider = "aws"
+			rpt := cloudreport.Generate(cloudProvider, assets)
+			cloudreport.RenderConsole(rpt)
+			cloudReport = &rpt
 			total = len(assets)
-			core.PrintResults(assets, total, "cloud assets")
+			fmt.Printf("\n[+] %d AWS assets discovered.\n", total)
 			elapsed(start)
 
 		case 5:
@@ -705,22 +1285,25 @@ func runInteractive(logDir string) {
 				log.Fatalf("[!] Logger setup failed: %v", err)
 			}
 			timestamp = li.Timestamp
-			fmt.Print("Azure subscription ID: ")
-			sub, _ := reader.ReadString('\n')
-			sub = strings.TrimSpace(sub)
-			if sub == "" {
-				fmt.Println("[!] Subscription ID is required; returning to menu.")
-				continue
-			}
 			ctx := context.Background()
 			start = time.Now()
-			as, err := cloud.DiscoverAzure(ctx, cloud.AzureConfig{Subscription: sub})
+			cfgAzure, err := resolveAzureConfig(ctx, reader, "", "", "", "")
+			if err != nil {
+				fmt.Printf("[!] Azure discovery cancelled: %v\n", err)
+				continue
+			}
+			fmt.Printf("[+] Discovering AZURE assets in subscription %s...\n", cfgAzure.Subscription)
+			as, err := cloud.DiscoverAzure(ctx, cfgAzure)
 			if err != nil {
 				log.Fatalf("[!] Azure discovery failed: %v", err)
 			}
 			assets = enrich(as)
+			cloudProvider = "azure"
+			rpt := cloudreport.Generate(cloudProvider, assets)
+			cloudreport.RenderConsole(rpt)
+			cloudReport = &rpt
 			total = len(assets)
-			core.PrintResults(assets, total, "cloud assets")
+			fmt.Printf("\n[+] %d Azure assets discovered.\n", total)
 			elapsed(start)
 
 		case 6:
@@ -730,25 +1313,25 @@ func runInteractive(logDir string) {
 				log.Fatalf("[!] Logger setup failed: %v", err)
 			}
 			timestamp = li.Timestamp
-			fmt.Print("GCP project ID: ")
-			project, _ := reader.ReadString('\n')
-			project = strings.TrimSpace(project)
-			fmt.Print("GCP zone (e.g., us-central1-a): ")
-			zone, _ := reader.ReadString('\n')
-			zone = strings.TrimSpace(zone)
-			if project == "" || zone == "" {
-				fmt.Println("[!] GCP discovery requires both project ID and zone; returning to menu.")
-				continue
-			}
 			ctx := context.Background()
 			start = time.Now()
-			as, err := cloud.DiscoverGCP(ctx, cloud.GCPConfig{Project: project, Zone: zone})
+			cfgGCP, err := resolveGCPConfig(reader, "", "", "")
+			if err != nil {
+				fmt.Printf("[!] GCP discovery cancelled: %v\n", err)
+				continue
+			}
+			fmt.Printf("[+] Discovering GCP assets in project %s, zone %s\n", cfgGCP.Project, cfgGCP.Zone)
+			as, err := cloud.DiscoverGCP(ctx, cfgGCP)
 			if err != nil {
 				log.Fatalf("[!] GCP discovery failed: %v", err)
 			}
 			assets = enrich(as)
+			cloudProvider = "gcp"
+			rpt := cloudreport.Generate(cloudProvider, assets)
+			cloudreport.RenderConsole(rpt)
+			cloudReport = &rpt
 			total = len(assets)
-			core.PrintResults(assets, total, "cloud assets")
+			fmt.Printf("\n[+] %d GCP assets discovered.\n", total)
 			elapsed(start)
 
 		case 7:
@@ -763,8 +1346,7 @@ func runInteractive(logDir string) {
 		if feature != "" && timestamp != "" {
 			fmt.Printf(" Logs saved at Documents/discovr_reports/logs/discovr_%s_log_%s.log\n", feature, timestamp)
 		}
-
-		handleExport(assets, feature, timestamp, "", "")
+		handleExport(assets, feature, timestamp, "", "", cloudProvider, cloudReport)
 	}
 }
 

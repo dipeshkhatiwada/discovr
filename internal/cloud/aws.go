@@ -615,17 +615,30 @@ func joinOrNA(values []string) string {
 	if len(values) == 0 {
 		return "N/A"
 	}
-	filtered := make([]string, 0, len(values))
+	counts := make(map[string]int, len(values))
+	order := make([]string, 0, len(values))
 	for _, v := range values {
 		v = strings.TrimSpace(v)
-		if v != "" {
-			filtered = append(filtered, v)
+		if v == "" {
+			continue
 		}
+		if _, ok := counts[v]; !ok {
+			order = append(order, v)
+		}
+		counts[v]++
 	}
-	if len(filtered) == 0 {
+	if len(order) == 0 {
 		return "N/A"
 	}
-	return strings.Join(filtered, ",")
+	parts := make([]string, 0, len(order))
+	for _, v := range order {
+		if counts[v] > 1 {
+			parts = append(parts, fmt.Sprintf("%s (x%d)", v, counts[v]))
+		} else {
+			parts = append(parts, v)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 func firstNonEmpty(a, b string) string {

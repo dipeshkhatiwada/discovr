@@ -231,13 +231,13 @@ func gcpDiscoverNetworks(ctx context.Context, client *compute.NetworksClient, pr
 		if err != nil {
 			return nil, fmt.Errorf("list networks: %w", err)
 		}
-		subnets := uniqueSegments(network.GetSubnetworks())
+		ports := summarizeSubnets(network.GetSubnetworks())
 		mode := "unknown"
 		if rc := network.GetRoutingConfig(); rc != nil && rc.GetRoutingMode() != "" {
 			mode = strings.ToLower(rc.GetRoutingMode())
 		}
 		osField := fmt.Sprintf("AutoSubnet:%t | Routing:%s", network.GetAutoCreateSubnetworks(), mode)
-		assets = append(assets, types.Asset{IP: "N/A", Hostname: fmt.Sprintf("VPC %s", network.GetName()), OS: osField, Ports: joinOrNA(subnets)})
+		assets = append(assets, types.Asset{IP: "N/A", Hostname: fmt.Sprintf("VPC %s", network.GetName()), OS: osField, Ports: ports})
 	}
 	return assets, nil
 }
@@ -395,24 +395,73 @@ func summarizeFirewallAllows(items []*computepb.Allowed, prefix string) []string
 	return entries
 }
 
-func uniqueSegments(entries []string) []string {
+func summarizeSubnets(entries []string) string {
 	if len(entries) == 0 {
-		return nil
+		return "N/A"
 	}
-	seen := make(map[string]struct{}, len(entries))
-	out := make([]string, 0, len(entries))
+	type regionSummary struct {
+		count   int
+		regions []string
+		seen    map[string]struct{}
+	}
+	order := make([]string, 0, len(entries))
+	summaries := make(map[string]*regionSummary, len(entries))
 	for _, entry := range entries {
-		seg := gcpLastSegment(entry)
-		if seg == "" {
+		name := strings.TrimSpace(gcpLastSegment(entry))
+		if name == "" {
 			continue
 		}
-		if _, ok := seen[seg]; ok {
-			continue
+		summary, exists := summaries[name]
+		if !exists {
+			summary = &regionSummary{seen: make(map[string]struct{})}
+			summaries[name] = summary
+			order = append(order, name)
 		}
-		seen[seg] = struct{}{}
-		out = append(out, seg)
+		summary.count++
+		if region := strings.TrimSpace(gcpRegionFromSubnetURL(entry)); region != "" {
+			if _, ok := summary.seen[region]; !ok {
+				summary.seen[region] = struct{}{}
+				summary.regions = append(summary.regions, region)
+			}
+		}
 	}
-	return out
+	if len(order) == 0 {
+		return "N/A"
+	}
+	parts := make([]string, 0, len(order))
+	for _, name := range order {
+		summary := summaries[name]
+		if len(summary.regions) > 1 {
+			sort.Strings(summary.regions)
+		}
+		switch {
+		case len(summary.regions) == 0:
+			if summary.count > 1 {
+				parts = append(parts, fmt.Sprintf("%s (%d subnets)", name, summary.count))
+			} else {
+				parts = append(parts, name)
+			}
+		case len(summary.regions) <= 5:
+			parts = append(parts, fmt.Sprintf("%s [%s] (%d subnets)", name, strings.Join(summary.regions, "|"), summary.count))
+		default:
+			display := summary.regions[:5]
+			parts = append(parts, fmt.Sprintf("%s [%s|+%d more] (%d subnets)", name, strings.Join(display, "|"), len(summary.regions)-len(display), summary.count))
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func gcpRegionFromSubnetURL(value string) string {
+	if value == "" {
+		return ""
+	}
+	parts := strings.Split(value, "/")
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] == "regions" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }
 
 func summarizeFirewallDenies(items []*computepb.Denied, prefix string) []string {

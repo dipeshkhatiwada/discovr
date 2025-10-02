@@ -29,13 +29,14 @@ func WriteCSV(rows []map[string]interface{}, outCSV string) {
 	defer writer.Flush()
 
 	// Write the headers
-	writer.Write([]string{"IP", "Hostname", "Open Ports", "OS Guess"})
+	writer.Write([]string{"IP", "Hostname", "Open Ports", "Nmap Summary", "OS Guess"})
 	// Write the data rows
 	for _, row := range rows {
 		writer.Write([]string{
 			row["ip"].(string),
 			row["hostname"].(string),
 			row["open_ports"].(string),
+			row["nmap_summary"].(string),
 			row["os_guess"].(string),
 		})
 	}
@@ -69,19 +70,20 @@ func WriteHTML(rows []map[string]interface{}, outHTML string) error {
     <h1>Discovr Scan Report</h1>
     <input id="q" placeholder="Filter results..." />
     <table>
-        <thead>
-            <tr><th>IP</th><th>Hostname</th><th>Open Ports</th><th>OS Guess</th></tr>
-        </thead>
-        <tbody>
-            {{range .}}
-            <tr>
-                <td>{{.ip}}</td>
-                <td>{{.hostname}}</td>
-                <td>{{.open_ports}}</td>
-                <td>{{.os_guess}}</td>
-            </tr>
-            {{end}}
-        </tbody>
+		<thead>
+			<tr><th>IP</th><th>Hostname</th><th>Open Ports</th><th>Nmap Summary</th><th>OS Guess</th></tr>
+		</thead>
+		<tbody>
+			{{range .}}
+			<tr>
+				<td>{{.ip}}</td>
+				<td>{{.hostname}}</td>
+				<td>{{.open_ports}}</td>
+				<td>{{.nmap_summary}}</td>
+				<td>{{.os_guess}}</td>
+			</tr>
+			{{end}}
+		</tbody>
     </table>
     <script>
         const q = document.getElementById('q');

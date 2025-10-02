@@ -31,12 +31,18 @@ func SaveResults(assets []types.Asset, formats []string, feature, timestamp stri
 		return fmt.Errorf("make html dir: %w", err)
 	}
 
-	// Normalize ports to comma-separated string
+	// Normalize output-friendly fields
 	normalized := make([]types.Asset, 0, len(assets))
 	for _, a := range assets {
 		a.Ports = strings.TrimSpace(a.Ports)
 		if a.Ports == "" {
 			a.Ports = "None"
+		}
+		a.Ports = compressRepeatedTokens(a.Ports)
+
+		a.NmapSummary = strings.TrimSpace(a.NmapSummary)
+		if a.NmapSummary == "" {
+			a.NmapSummary = "None"
 		}
 		normalized = append(normalized, a)
 	}
@@ -74,9 +80,9 @@ func saveCSV(path string, assets []types.Asset) error {
 	defer f.Close()
 	w := csv.NewWriter(f)
 	defer w.Flush()
-	w.Write([]string{"IP", "Hostname", "OS", "Ports", "Tag", "Risk"})
+	w.Write([]string{"IP", "Hostname", "OS", "Ports", "Nmap Summary", "Tag", "Risk"})
 	for _, a := range assets {
-		if err := w.Write([]string{a.IP, a.Hostname, a.OS, a.Ports, a.Tag, a.Risk}); err != nil {
+		if err := w.Write([]string{a.IP, a.Hostname, a.OS, a.Ports, a.NmapSummary, a.Tag, a.Risk}); err != nil {
 			return err
 		}
 	}
@@ -101,11 +107,56 @@ func saveHTML(path string, assets []types.Asset) error {
 	rows := make([]map[string]interface{}, len(assets))
 	for i, a := range assets {
 		rows[i] = map[string]interface{}{
-			"ip":         a.IP,
-			"hostname":   a.Hostname,
-			"open_ports": a.Ports,
-			"os_guess":   a.OS,
+			"ip":           a.IP,
+			"hostname":     a.Hostname,
+			"open_ports":   a.Ports,
+			"nmap_summary": a.NmapSummary,
+			"os_guess":     a.OS,
 		}
 	}
 	return export.WriteHTML(rows, path)
+}
+
+func compressRepeatedTokens(input string) string {
+	if input == "" {
+		return input
+	}
+	if !strings.Contains(input, ",") {
+		return input
+	}
+	parts := strings.Split(input, ",")
+	counts := make(map[string]int, len(parts))
+	order := make([]string, 0, len(parts))
+	for _, raw := range parts {
+		token := strings.TrimSpace(raw)
+		if token == "" {
+			continue
+		}
+		if _, ok := counts[token]; !ok {
+			order = append(order, token)
+		}
+		counts[token]++
+	}
+	if len(order) == 0 {
+		return input
+	}
+	allSingle := true
+	for _, token := range order {
+		if counts[token] > 1 {
+			allSingle = false
+			break
+		}
+	}
+	if allSingle {
+		return strings.Join(order, ",")
+	}
+	result := make([]string, 0, len(order))
+	for _, token := range order {
+		if counts[token] > 1 {
+			result = append(result, fmt.Sprintf("%s (x%d)", token, counts[token]))
+		} else {
+			result = append(result, token)
+		}
+	}
+	return strings.Join(result, ",")
 }

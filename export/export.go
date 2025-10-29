@@ -1,113 +1,124 @@
 package export
 
 import (
-    "encoding/csv"
-    "fmt"
-    "html/template"
-    "os"
-    "path/filepath"
+	"encoding/csv"
+	"fmt"
+	"html/template"
+	"os"
+	"path/filepath"
+	"time"
 )
 
 // WriteCSV writes scan results to a CSV file, creating directories if needed.
 func WriteCSV(rows []map[string]interface{}, outCSV string) {
-    // Ensure the directory exists or create it
-    dir := filepath.Dir(outCSV)
-    if err := os.MkdirAll(dir, 0755); err != nil {
-        fmt.Println("Error creating directory:", err)
-        return
-    }
+	// Ensure the directory exists or create it
+	dir := filepath.Dir(outCSV)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Println("Error creating directory:", err)
+		return
+	}
 
-    // Create the CSV file
-    file, err := os.Create(outCSV)
-    if err != nil {
-        fmt.Println("Error creating CSV file:", err)
-        return
-    }
-    defer file.Close()
+	// Create the CSV file
+	file, err := os.Create(outCSV)
+	if err != nil {
+		fmt.Println("Error creating CSV file:", err)
+		return
+	}
+	defer file.Close()
 
-    writer := csv.NewWriter(file)
-    defer writer.Flush()
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
 
-    // Write the headers
-    writer.Write([]string{"IP", "Hostname", "Open Ports", "OS Guess"})
-    // Write the data rows
-    for _, row := range rows {
-        writer.Write([]string{
-            row["ip"].(string),
-            row["hostname"].(string),
-            row["open_ports"].(string),
-            row["os_guess"].(string),
-        })
-    }
+	// Write the headers
+	writer.Write([]string{"IP", "Hostname", "Open Ports", "Nmap Summary", "OS Guess"})
+	// Write the data rows
+	for _, row := range rows {
+		writer.Write([]string{
+			row["ip"].(string),
+			row["hostname"].(string),
+			row["open_ports"].(string),
+			row["nmap_summary"].(string),
+			row["os_guess"].(string),
+		})
+	}
 }
 
 // WriteHTML writes scan results to an HTML file with a simple client-side filter.
-func WriteHTML(rows []map[string]interface{}, outHTML string) {
-    // Ensure the directory exists or create it
-    dir := filepath.Dir(outHTML)
-    if err := os.MkdirAll(dir, 0755); err != nil {
-        fmt.Println("Error creating directory:", err)
-        return
-    }
+func WriteHTML(rows []map[string]interface{}, outHTML string) error {
+	// Ensure the directory exists or create it
+	dir := filepath.Dir(outHTML)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
 
-    // Define the HTML template with a search/filter feature
-    tmpl, err := template.New("report").Parse(`
-    <!doctype html>
-    <html>
-    <head>
-        <title>Discovr Scan Report</title>
-        <style>
-            body { font-family: Arial, sans-serif; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { padding: 8px; text-align: left; border: 1px solid #ddd; }
-            th { background-color: #f2f2f2; }
-            #q { margin: 8px 0; padding: 8px; width: 100%; }
-        </style>
-    </head>
-    <body>
-        <h1>Discovr Scan Report</h1>
-        <input id="q" placeholder="Filter results..." />
-        <table>
-            <tr><th>IP</th><th>Hostname</th><th>Open Ports</th><th>OS Guess</th></tr>
-            {{range .}}
-                <tr>
-                    <td>{{.ip}}</td>
-                    <td>{{.hostname}}</td>
-                    <td>{{.open_ports}}</td>
-                    <td>{{.os_guess}}</td>
-                </tr>
-            {{end}}
-        </table>
-        <script>
-            const q = document.getElementById('q');
-            const rows = [...document.querySelectorAll('table tbody tr')];
-            q.addEventListener('input', () => {
-                const s = q.value.toLowerCase();
-                rows.forEach(row => {
-                    row.style.display = row.textContent.toLowerCase().includes(s) ? '' : 'none';
-                });
+	timeFuncs := template.FuncMap{
+		"time_now": func() string {
+			return time.Now().Format("Jan 02, 2006 15:04:05")
+		},
+	}
+
+	// Define the HTML template with a search/filter feature
+	tmpl, err := template.New("report").Funcs(timeFuncs).Parse(`<!doctype html>
+<html>
+<head>
+    <title>Discovr Scan Report</title>
+    <meta charset="utf-8" />
+    <style>
+        body { font-family: Arial, sans-serif; margin: 24px; background: #f9fafb; color: #1f2937; }
+        h1 { margin-bottom: 12px; text-align: center; border-bottom: 2px solid #0078d4; padding-bottom: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1); }
+        th, td { padding: 8px; text-align: left; border: 1px solid #e2e8f0; }
+        th { background-color: #0078d4; font-weight: 600; color: #fff; }
+        tr:nth-child(even) td { background-color: #f2f2f2; }
+        #q { margin: 8px 0; padding: 8px; width: 100%; max-width: 420px; border: 1px solid #cbd5e0; border-radius: 4px; }
+		.footer { margin-top: 50px; text-align: center; font-size: 0.9em; color: #888;}
+    </style>
+</head>
+<body>
+    <h1>Discovr Scan Report</h1>
+	<p><strong>Generated:</strong> {{ time_now }} </p>
+    <input id="q" placeholder="Filter results..." />
+    <table>
+		<thead>
+			<tr><th>IP</th><th>Hostname</th><th>Open Ports</th><th>Nmap Summary</th><th>OS Guess</th></tr>
+		</thead>
+		<tbody>
+			{{range .}}
+			<tr>
+				<td>{{.ip}}</td>
+				<td>{{.hostname}}</td>
+				<td>{{.open_ports}}</td>
+				<td>{{.nmap_summary}}</td>
+				<td>{{.os_guess}}</td>
+			</tr>
+			{{end}}
+		</tbody>
+    </table>
+	<div class="footer">Generated by Discovr — {{ time_now }}</div> 
+    <script>
+        const q = document.getElementById('q');
+        const rows = [...document.querySelectorAll('table tbody tr')];
+        q.addEventListener('input', () => {
+            const s = q.value.toLowerCase();
+            rows.forEach(row => {
+                row.style.display = row.textContent.toLowerCase().includes(s) ? '' : 'none';
             });
-        </script>
-    </body>
-    </html>`)
+        });
+    </script>
+</body>
+</html>`)
+	if err != nil {
+		return fmt.Errorf("parse html template: %w", err)
+	}
 
-    if err != nil {
-        fmt.Println("Error parsing HTML template:", err)
-        return
-    }
+	file, err := os.Create(outHTML)
+	if err != nil {
+		return fmt.Errorf("create html file: %w", err)
+	}
+	defer file.Close()
 
-    // Create the HTML file
-    file, err := os.Create(outHTML)
-    if err != nil {
-        fmt.Println("Error creating HTML file:", err)
-        return
-    }
-    defer file.Close()
-
-    // Execute the template and write to the file
-    err = tmpl.Execute(file, rows)
-    if err != nil {
-        fmt.Println("Error executing HTML template:", err)
-    }
+	if err := tmpl.Execute(file, rows); err != nil {
+		return fmt.Errorf("render html template: %w", err)
+	}
+	return nil
 }
-

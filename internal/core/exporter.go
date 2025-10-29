@@ -13,11 +13,11 @@ import (
 )
 
 func SaveResults(assets []types.Asset, formats []string, feature, timestamp string) error {
-	home, err := os.UserHomeDir()
+	dir, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("get home dir: %w", err)
+		return fmt.Errorf("get current dir: %w", err)
 	}
-	base := filepath.Join(home, "Documents", "discovr_reports")
+	base := filepath.Join(dir, "discovr_reports")
 	csvDir := filepath.Join(base, "csv")
 	jsonDir := filepath.Join(base, "json")
 	htmlDir := filepath.Join(base, "html")

@@ -1,18 +1,17 @@
 package cloudreport
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-
-	"discovr/internal/types"
 )
 
 type Report struct {
-	Provider string
+	Provider stringgit 
 	Summary  []SummaryRow
 	Tables   []Table
 }
@@ -48,11 +47,11 @@ func Save(provider, timestamp string, rpt Report) (string, error) {
 	if strings.TrimSpace(timestamp) == "" {
 		timestamp = time.Now().Format("20060102_150405")
 	}
-	home, err := os.UserHomeDir()
+	dir, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("get home dir: %w", err)
+		return "", fmt.Errorf("get current dir: %w", err)
 	}
-	base := filepath.Join(home, "Documents", "discovr_reports", "cloud")
+	base := filepath.Join(dir, "discovr_reports", "cloud")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return "", fmt.Errorf("ensure report dir: %w", err)
 	}
@@ -62,6 +61,66 @@ func Save(provider, timestamp string, rpt Report) (string, error) {
 		return "", fmt.Errorf("write report: %w", err)
 	}
 	return path, nil
+}
+
+func SaveHTML(provider, timestamp string, rpt Report) (string, error) {
+	html, err := renderHTMLReport(rpt)
+	if err != nil {
+		return "", fmt.Errorf("build html report: %w", err)
+	}
+	if strings.TrimSpace(timestamp) == "" {
+		timestamp = time.Now().Format("20060102_150405")
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get current dir: %w", err)
+	}
+	base := filepath.Join(dir, "discovr_reports", "html")
+
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", fmt.Errorf("ensure html dir: %w", err)
+	}
+	filename := fmt.Sprintf("discovr_%s_report_%s.html", strings.ToLower(rpt.Provider), timestamp)
+	path := filepath.Join(base, filename)
+	if err := os.WriteFile(path, []byte(html), 0o644); err != nil {
+		return "", fmt.Errorf("write html report: %w", err)
+	}
+	return path, nil
+}
+
+func ExportCSVs(provider, timestamp string, rpt Report) ([]string, error) {
+	if strings.TrimSpace(timestamp) == "" {
+		timestamp = time.Now().Format("20060102_150405")
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("get current dir: %w", err)
+	}
+	csvBase := filepath.Join(dir, "discovr_reports", "csv")
+	if err := os.MkdirAll(csvBase, 0o755); err != nil {
+		return nil, fmt.Errorf("ensure csv dir: %w", err)
+	}
+	folder := fmt.Sprintf("%s_%s", strings.ToLower(rpt.Provider), timestamp)
+	target := filepath.Join(csvBase, folder)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return nil, fmt.Errorf("ensure provider csv dir: %w", err)
+	}
+	paths := make([]string, 0, len(rpt.Tables)+1)
+	summaryPath := filepath.Join(target, fmt.Sprintf("%s_summary_%s.csv", strings.ToLower(rpt.Provider), timestamp))
+	if err := writeCSV(summaryPath, []string{"Section", "Count"}, summaryRows(rpt.Summary)); err != nil {
+		return nil, err
+	}
+	paths = append(paths, summaryPath)
+	for _, table := range rpt.Tables {
+		slug := sanitize(table.Title)
+		filename := fmt.Sprintf("%s_%s_%s.csv", strings.ToLower(rpt.Provider), slug, timestamp)
+		path := filepath.Join(target, filename)
+		if err := writeCSV(path, table.Header, table.Rows); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
 }
 
 func buildAWSReport(assets []types.Asset) Report {
@@ -191,7 +250,8 @@ func formatAWSRows(section string, assets []types.Asset) [][]string {
 	for _, asset := range assets {
 		switch section {
 		case "IAM Resources":
-			rows = append(rows, []string{strings.Split(asset.Hostname, " ")[1], asset.Hostname, asset.OS})
+			name := strings.TrimPrefix(asset.Hostname, "IAM ")
+			rows = append(rows, []string{name, asset.Hostname, asset.OS})
 		case "Networking":
 			rows = append(rows, []string{"Security Group", asset.Hostname, fmt.Sprintf("Ports %s", asset.Ports)})
 		case "Storage":
@@ -335,4 +395,154 @@ func totalWidth(widths []int) int {
 		}
 	}
 	return total
+}
+
+func writeCSV(path string, header []string, rows [][]string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create csv: %w", err)
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	if err := w.Write(header); err != nil {
+		return fmt.Errorf("write csv header: %w", err)
+	}
+	for _, row := range rows {
+		if err := w.Write(row); err != nil {
+			return fmt.Errorf("write csv row: %w", err)
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
+func summaryRows(rows []SummaryRow) [][]string {
+	out := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, []string{r.Label, fmt.Sprintf("%d", r.Count)})
+	}
+	return out
+}
+
+func sanitize(name string) string {
+	lower := strings.ToLower(name)
+	replacer := strings.NewReplacer(" ", "_", "/", "_", "-", "_", "(", "_", ")", "", "__", "_")
+	cleaned := replacer.Replace(lower)
+	for strings.Contains(cleaned, "__") {
+		cleaned = strings.ReplaceAll(cleaned, "__", "_")
+	}
+	return strings.Trim(cleaned, "_")
+}
+
+func renderHTMLReport(r Report) (string, error) {
+	var b strings.Builder
+
+	// Basic HTML header
+	b.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
+	b.WriteString("<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n")
+	title := fmt.Sprintf("%s Cloud Asset Report", r.Provider)
+	b.WriteString(fmt.Sprintf("<title>%s</title>\n", title))
+	b.WriteString(`
+<style>
+body {
+	font-family: Arial, sans-serif;
+	margin: 40px;
+	background-color: #f9f9f9;
+	color: #333;
+}
+h1 {
+	text-align: center;
+}
+h2 {
+	margin-top: 40px;
+	border-bottom: 2px solid #0078d4;
+	padding-bottom: 5px;
+	color: #0078d4;
+}
+table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-top: 10px;
+	margin-bottom: 30px;
+	background: #fff;
+}
+th, td {
+	border: 1px solid #ddd;
+	padding: 8px 10px;
+	text-align: left;
+}
+th {
+	background-color: #0078d4;
+	color: white;
+}
+tr:nth-child(even) {
+	background-color: #f2f2f2;
+}
+.summary-table {
+	width: 50%;
+	margin: 0 auto 40px auto;
+}
+.summary-table th {
+	background-color: #555;
+}
+.footer {
+	margin-top: 50px;
+	text-align: center;
+	font-size: 0.9em;
+	color: #888;
+}
+</style>
+</head>
+<body>
+`)
+	// Report Title
+	b.WriteString(fmt.Sprintf("<h1>%s</h1>\n", title))
+	b.WriteString(fmt.Sprintf("<p><strong>Generated:</strong> %s</p>\n", time.Now().Format("Jan 02, 2006 15:04:05")))
+
+	// Summary section
+	b.WriteString("<h2>Summary</h2>\n")
+	b.WriteString("<table class=\"summary-table\">\n<thead><tr><th>Section</th><th>Count</th></tr></thead>\n<tbody>\n")
+
+	total := 0
+	for _, row := range r.Summary {
+		b.WriteString(fmt.Sprintf("<tr><td>%s</td><td>%d</td></tr>\n", row.Label, row.Count))
+		total += row.Count
+	}
+	b.WriteString(fmt.Sprintf("<tr><th>Total</th><th>%d</th></tr>\n", total))
+	b.WriteString("</tbody></table>\n")
+
+	// Each table (section)
+	for _, table := range r.Tables {
+		b.WriteString(fmt.Sprintf("<h2>%s</h2>\n", table.Title))
+		b.WriteString("<table>\n<thead><tr>")
+		for _, h := range table.Header {
+			b.WriteString(fmt.Sprintf("<th>%s</th>", h))
+		}
+		b.WriteString("</tr></thead>\n<tbody>\n")
+
+		for _, row := range table.Rows {
+			b.WriteString("<tr>")
+			for _, col := range row {
+				b.WriteString(fmt.Sprintf("<td>%s</td>", htmlEscape(col)))
+			}
+			b.WriteString("</tr>\n")
+		}
+
+		b.WriteString("</tbody></table>\n")
+	}
+
+	b.WriteString(fmt.Sprintf("<div class=\"footer\">Generated by Discovr — %s</div>\n", time.Now().Format("2006-01-02 15:04:05")))
+	b.WriteString("</body></html>")
+
+	return b.String(), nil
+}
+func htmlEscape(s string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		"\"", "&quot;",
+		"'", "&#39;",
+	)
+	return replacer.Replace(s)
 }

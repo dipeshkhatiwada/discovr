@@ -1,6 +1,7 @@
 package cloudreport
 
 import (
+	"discovr/internal/types"
 	"encoding/csv"
 	"fmt"
 	"os"
@@ -11,7 +12,7 @@ import (
 )
 
 type Report struct {
-	Provider stringgit 
+	Provider string
 	Summary  []SummaryRow
 	Tables   []Table
 }
@@ -47,11 +48,11 @@ func Save(provider, timestamp string, rpt Report) (string, error) {
 	if strings.TrimSpace(timestamp) == "" {
 		timestamp = time.Now().Format("20060102_150405")
 	}
-	dir, err := os.Getwd()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("get current dir: %w", err)
+		return "", fmt.Errorf("get home dir: %w", err)
 	}
-	base := filepath.Join(dir, "discovr_reports", "cloud")
+	base := filepath.Join(home, "Documents", "discovr_reports", "cloud")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return "", fmt.Errorf("ensure report dir: %w", err)
 	}
@@ -71,12 +72,11 @@ func SaveHTML(provider, timestamp string, rpt Report) (string, error) {
 	if strings.TrimSpace(timestamp) == "" {
 		timestamp = time.Now().Format("20060102_150405")
 	}
-	dir, err := os.Getwd()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("get current dir: %w", err)
+		return "", fmt.Errorf("get home dir: %w", err)
 	}
-	base := filepath.Join(dir, "discovr_reports", "html")
-
+	base := filepath.Join(home, "Documents", "discovr_reports", "html")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return "", fmt.Errorf("ensure html dir: %w", err)
 	}
@@ -92,11 +92,11 @@ func ExportCSVs(provider, timestamp string, rpt Report) ([]string, error) {
 	if strings.TrimSpace(timestamp) == "" {
 		timestamp = time.Now().Format("20060102_150405")
 	}
-	dir, err := os.Getwd()
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("get current dir: %w", err)
+		return nil, fmt.Errorf("get home dir: %w", err)
 	}
-	csvBase := filepath.Join(dir, "discovr_reports", "csv")
+	csvBase := filepath.Join(home, "Documents", "discovr_reports", "csv")
 	if err := os.MkdirAll(csvBase, 0o755); err != nil {
 		return nil, fmt.Errorf("ensure csv dir: %w", err)
 	}

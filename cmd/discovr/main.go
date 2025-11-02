@@ -31,6 +31,11 @@ import (
 	"discovr/internal/util"
 )
 
+var (
+	version = "v1.0.0"
+	commit  = "none"
+	date    = "unknown"
+)
 func main() {
 	// Network
 	scanNetwork := flag.String("scan-network", "", "Network range, e.g. 192.168.1.0/24")
@@ -98,6 +103,7 @@ func main() {
 		handleDryRun(*autoip, *scanNetwork, *ports, *parallel, *cloudProv, *profile, *region, *subscription, *project, *zone, *adFlag, *domain, *username, *password, *passiveFlag, *iface, *timeoutSec)
 		return
 	}
+	fmt.Printf("Discovr version: %s\nCommit: %s\nBuild date: %s\n", version, commit, date)
 
 	// Ask for admin/root at startup to improve scanning capabilities
 	if !util.IsAdmin() {

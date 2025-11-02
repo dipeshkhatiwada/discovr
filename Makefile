@@ -3,7 +3,10 @@ DIST     ?= dist
 PKG      ?= ./cmd/$(BINARY)
 GOFLAGS  ?= -trimpath
 TAGS     ?=
-LDFLAGS  ?=
+VERSION  ?= v1.0.0
+COMMIT   := $(shell git rev-parse --short HEAD)
+DATE     := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS  ?= -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 PLATFORMS := \
 	macos:darwin/amd64 \
@@ -64,3 +67,9 @@ help: ## Show available targets and descriptions
 		desc=$$(echo $$line | sed -E 's/^[^#]+##\s*//'); \
 		printf "%-15s %s\n" $$target "$$desc"; \
 	done
+
+# Print version info
+version:
+	@echo "Version: $(VERSION)"
+	@echo "Commit:  $(COMMIT)"
+	@echo "Date:    $(DATE)"
